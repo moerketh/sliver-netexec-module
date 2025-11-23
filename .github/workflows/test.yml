@@ -24,10 +24,8 @@ jobs:
         pipx inject netexec sliver-py
         pip install pytest flake8
         # Set PYTHONPATH to NetExec's venv site-packages for imports
-        echo "export PYTHONPATH=\"/home/runner/.local/pipx/venvs/netexec/lib/python3.12/site-packages:\$PYTHONPATH\"" >> $GITHUB_ENV
+        echo "PYTHONPATH=/home/runner/.local/pipx/venvs/netexec/lib/python3.12/site-packages:$PYTHONPATH" >> $GITHUB_ENV
 
     - name: Run tests
       run: |
         python -m pytest tests/test_sliver_exec.py -v
-      env:
-        PYTHONPATH: ${{ env.PYTHONPATH }}
