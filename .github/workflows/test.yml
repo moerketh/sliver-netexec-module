@@ -29,3 +29,5 @@ jobs:
     - name: Run tests
       run: |
         python -m pytest tests/test_sliver_exec.py -v
+      env:
+        PYTHONPATH: ${{ env.PYTHONPATH }}
