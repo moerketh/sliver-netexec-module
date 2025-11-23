@@ -26,5 +26,6 @@ jobs:
 
     - name: Run tests
       run: |
-        VENV_PATH=$(pipx environment netexec --path)
+        VENV_BASE=$(pipx list | grep "venvs are in" | sed 's/.*venvs are in \(.*\)/\1/')
+        VENV_PATH="${VENV_BASE}/netexec"
         "$VENV_PATH/bin/python" -m pytest tests/test_sliver_exec.py -v
