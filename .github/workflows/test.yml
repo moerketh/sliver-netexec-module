@@ -18,10 +18,13 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Install dependencies
+    - name: Install dependencies with pipx
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pipx install git+https://github.com/Pennyw0rth/NetExec
+        pipx inject netexec sliver-py
+        pip install pytest flake8
+        # Set PYTHONPATH to NetExec's venv site-packages for imports
+        echo "export PYTHONPATH=\"/home/runner/.local/pipx/venvs/netexec/lib/python3.12/site-packages:\$PYTHONPATH\"" >> $GITHUB_ENV
 
     - name: Run tests
       run: |
