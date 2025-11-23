@@ -1,0 +1,16 @@
+{
+    "python.linting.enabled": true,
+    "python.linting.flake8Enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.mypyEnabled": false,
+    "python.linting.flake8Args": [
+        "--max-line-length=88",
+        "--extend-ignore=E203,W503"
+    ],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}",
+        "/usr/local/py-utils/venvs/netexec/lib/python3.12/site-packages",
+        "~/.local/pipx/venvs/netexec/lib/python3.12/site-packages"
+    ],
+    "python.envFile": "${workspaceFolder}/.env"
+}

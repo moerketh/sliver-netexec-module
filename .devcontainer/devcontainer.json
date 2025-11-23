@@ -1,0 +1,14 @@
+{
+	"name": "Python NetExec Sliver Dev)",
+	"image": "mcr.microsoft.com/devcontainers/python:2-3.12-bullseye",
+	"postCreateCommand": "pipx ensurepath && pipx install git+https://github.com/Pennyw0rth/NetExec && pipx inject netexec sliver-py && pip install --user pytest flake8 && echo 'export PYTHONPATH=\"/usr/local/py-utils/venvs/netexec/lib/python3.12/site-packages:$PYTHONPATH\"' >> ~/.bashrc && . ~/.bashrc",
+	"postAttachCommand": ". ~/.bashrc",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-python.pytest"
+			]
+		}
+	}
+}
