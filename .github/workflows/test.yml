@@ -26,4 +26,5 @@ jobs:
 
     - name: Run tests
       run: |
-        /home/runner/.local/pipx/venvs/netexec/bin/python -m pytest tests/test_sliver_exec.py -v
+        VENV_PATH=$(pipx environment netexec --path)
+        "$VENV_PATH/bin/python" -m pytest tests/test_sliver_exec.py -v
