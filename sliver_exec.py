@@ -583,7 +583,7 @@ class NXCModule:
             # Generate implant
             context.log.display(f"Generating Sliver {os_type}/{arch} {self.format.lower()}...")
             resp = self._worker_submit('generate_implant', ic)
-            context.log.info(f"Implant generated")
+            context.log.info("Implant generated")
             context.log.debug(f"Implant generated is ({len(resp.File.Data)} bytes)")            
             return resp.File.Data
         except Exception as e:

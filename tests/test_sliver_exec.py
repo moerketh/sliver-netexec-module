@@ -3,10 +3,9 @@ import pytest
 import sys
 import os
 import inspect
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch, MagicMock
 
 # Assuming the module is in the parent directory or adjust import path as needed
-import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sliver_exec import NXCModule
@@ -300,7 +299,6 @@ class TestNXCModule:
         mock_listener_tcp.Protocol = "tcp"
         mock_listener_tcp.Port = 443
         mock_listener_tcp.Name = "mtls"
-        mock_jobs_with_tcp_listener = [mock_listener_tcp]
 
         # Mock no existing matching profiles
         mock_profiles = []
@@ -402,12 +400,12 @@ class TestNXCModule:
         assert ic.GOOS == "windows"
         assert ic.GOARCH == "amd64"
         assert ic.Format == 2  # EXECUTABLE enum value (from the test output showing Format: EXECUTABLE)
-        assert ic.IsBeacon == True
+        assert ic.IsBeacon
         assert ic.BeaconInterval == 5 * 1_000_000_000
         assert ic.BeaconJitter == 3 * 1_000_000_000
-        assert ic.Debug == False
-        assert ic.ObfuscateSymbols == True
-        assert ic.Evasion == True  # Windows specific
+        assert not ic.Debug
+        assert ic.ObfuscateSymbols
+        assert ic.Evasion  # Windows specific
         assert len(ic.C2) == 1
         assert ic.C2[0].URL == "mtls://192.168.1.100:443"
         assert ic.C2[0].Priority == 0
@@ -417,7 +415,7 @@ class TestNXCModule:
 
         ic = module_instance._build_default_implant_config("linux", "amd64", "test.exe", "mtls://192.168.1.100:443")
 
-        assert ic.Evasion == False  # Linux should not have evasion
+        assert not ic.Evasion  # Linux should not have evasion
 
     @patch('sliver_exec.NXCModule._get_shared_worker')
     def test_generate_sliver_implant_connection_error(self, mock_get_worker, mock_context, module_instance, mock_config_file):

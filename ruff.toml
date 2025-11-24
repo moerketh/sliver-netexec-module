@@ -1,0 +1,12 @@
+line-length = 88
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+]
+
+[lint]
+# Ruff handles these automatically with black compatibility
+ignore = []
