@@ -1,4 +1,8 @@
+
 # Sliver NetExec Module
+
+[![](https://github.com/moerketh/sliver-netexec-module/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/moerketh/sliver-netexec-module/actions/workflows/test.yml)
+
 
 This is a NetExec (formerly CrackMapExec) module that generates unique Sliver beacons and executes them on remote Windows/Linux targets via SMB.
 
