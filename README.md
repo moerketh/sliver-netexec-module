@@ -28,20 +28,75 @@ The `sliver_exec` module:
 - NetExec (nxc) installed
 - Sliver C2 server running
 - Valid Sliver client configuration
-- sliver-py Python package
 
-## Installation on HTB PwnBox
+## Architecture
+
+### Lazy Loading of Protobuf Dependencies
+
+This module uses lazy loading for Sliver protobuf bindings to ensure compatibility with NetExec's module discovery system. When NetExec lists available modules (e.g., `nxc smb -L`), it imports each module to extract metadata like descriptions and options. Since NetExec's environment doesn't include Sliver protobuf bindings, the module must be importable without immediately requiring these dependencies.
+
+**Why lazy loading is necessary:**
+
+- **NetExec compatibility**: NetExec environments don't include Sliver protobuf bindings, so modules must be importable for listing without external dependencies
+- **Module discovery**: Allows NetExec to load module metadata without triggering protobuf imports
+- **Path isolation**: Uses protobuf bindings from the module's local `src/` directory rather than requiring system-wide installation
+
+**Performance context:**
+
+The original test slowdown (~116s collection time) was caused by including the full NetExec environment in the project's development venv, not by protobuf loading overhead. Lazy loading here serves compatibility rather than performance optimization.
+
+## Installation
+
+### For Development
+
+Install from source:
 
 ```bash
-# Remove pip-installed netexec
+git clone https://github.com/moerketh/sliver-netexec-module.git
+cd sliver-netexec-module
+poetry install
+```
+
+### For NetExec Usage
+
+After installing NetExec, install this module into NetExec's environment:
+
+```bash
+# Build the package
+poetry build
+
+# Install into NetExec's pipx environment (if using pipx)
+pipx inject netexec dist/sliver_nxc_module-0.1.0-py3-none-any.whl
+
+# Or install directly with pip if NetExec is installed globally
+pip install dist/sliver_nxc_module-0.1.0-py3-none-any.whl
+```
+
+**Note:** This package includes pre-generated Sliver protobuf bindings, so you don't need to install `sliver-py` or generate protobuf files locally.
+
+### NetExec Setup
+
+Install NetExec if you haven't already:
+
+```bash
+pip install netexec
+```
+
+Or on HTB PwnBox:
+
+```bash
+# Remove pip-installed netexec if present
 sudo pip3 uninstall -yqq netexec
 
-# Install netexec via pipx + Sliver SDK
+# Install netexec via pipx
 sudo apt install -y pipx git
 pipx ensurepath
 pipx install git+https://github.com/Pennyw0rth/NetExec
-pipx inject netexec sliver-py
+```
 
+### Sliver Setup
+
+```bash
 # Install Sliver
 curl https://sliver.sh/install | sudo bash
 cp .sliver-client/configs/${USER}_localhost.cfg .sliver-client/configs/default.cfg
@@ -86,9 +141,26 @@ config_path = /path/to/your/sliver/config.cfg
 
 This module was written as an exercise as part of the CrackMapExec course in the **Active Directory Penetration Expert Course** on Hack The Box.
 
+## Development
+
+For contributors who want to modify the protobuf bindings:
+
+```bash
+# Install in development mode
+poetry install
+
+# Regenerate protobuf bindings (requires sliver-source submodule)
+poetry run generate-protobuf
+```
+
 ## Testing
 
 Run the test suite:
 ```bash
-python -m pytest tests/
+poetry run pytest
+```
+
+Or run specific tests:
+```bash
+poetry run pytest tests/test_protobuf.py
 ```

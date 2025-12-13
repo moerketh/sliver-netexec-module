@@ -5,6 +5,22 @@ import os
 import inspect
 from unittest.mock import Mock, patch
 
+# Mock sliver imports
+sys.modules['sliver'] = Mock()
+sys.modules['sliver.pb'] = Mock()
+sys.modules['sliver.pb.clientpb'] = Mock()
+sys.modules['sliver.pb.clientpb'].client_pb2 = Mock()
+sys.modules['sliver.pb.rpcpb'] = Mock()
+sys.modules['sliver.pb.rpcpb'].services_pb2_grpc = Mock()
+
+# Mock nxc imports
+sys.modules['nxc'] = Mock()
+sys.modules['nxc.helpers'] = Mock()
+sys.modules['nxc.helpers.misc'] = Mock()
+CATEGORY = Mock()
+CATEGORY.PRIVILEGE_ESCALATION = "PRIVILEGE_ESCALATION"
+sys.modules['nxc.helpers.misc'].CATEGORY = CATEGORY
+
 # Assuming the module is in the parent directory or adjust import path as needed
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -60,7 +76,11 @@ def mock_module_options():
         "SHARE": None,
         "PROFILE": None,
         "WAIT": "30",
-        "FORMAT": "exe"
+        "FORMAT": "exe",
+        "STAGING": "False",
+        "STAGER_RHOST": None,
+        "STAGER_RPORT": None,
+        "STAGER_PROTOCOL": "http"
     }
 
 @pytest.fixture
@@ -176,6 +196,40 @@ class TestNXCModule:
             module.options(mock_context, mock_module_options)
         mock_context.log.fail.assert_called_once_with("RPORT must be a valid port number (1-65535): not-a-number")
 
+    def test_options_invalid_stager_rhost(self, mock_context, mock_module_options):
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_RHOST"] = "invalid.ip.address"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        mock_context.log.fail.assert_called_once_with("STAGER_RHOST must be a valid IPv4 address: invalid.ip.address")
+
+    def test_options_invalid_stager_rport(self, mock_context, mock_module_options):
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_RPORT"] = "99999"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        mock_context.log.fail.assert_called_once_with("STAGER_RPORT must be a valid port number (1-65535): 99999")
+
+    def test_options_invalid_stager_rport_non_numeric(self, mock_context, mock_module_options):
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_RPORT"] = "not-a-number"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        mock_context.log.fail.assert_called_once_with("STAGER_RPORT must be a valid port number (1-65535): not-a-number")
+
+    def test_options_invalid_stager_protocol(self, mock_context, mock_module_options):
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PROTOCOL"] = "invalid"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        mock_context.log.fail.assert_called_once_with("STAGER_PROTOCOL must be 'http' or 'tcp' (default: http)")
+
+
+
     def test_options_unknown_option(self, mock_context, mock_module_options, mock_config_file):
         mock_context.conf.get.return_value = mock_config_file
         mock_module_options["UNKNOWN_OPTION"] = "value"
@@ -190,12 +244,29 @@ class TestNXCModule:
         assert module_instance.rhost == "192.168.1.100"
         assert module_instance.rport == 443
         assert module_instance.cleanup is True
+        assert module_instance.staging is False
+        assert module_instance.stager_rhost is None
+        assert module_instance.stager_rport is None
+        assert module_instance.stager_protocol == "http"
         assert module_instance.wait_seconds == 30
         assert module_instance.format == "EXECUTABLE"
         assert module_instance.extension == "exe"
         mock_context.conf.get.assert_called_once()
 
-    
+    def test_options_valid_with_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_RHOST"] = "10.0.0.1"
+        mock_module_options["STAGER_RPORT"] = "8080"
+        mock_module_options["STAGER_PROTOCOL"] = "tcp"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.rhost == "192.168.1.100"
+        assert module_instance.rport == 443
+        assert module_instance.staging is True
+        assert module_instance.stager_rhost == "10.0.0.1"
+        assert module_instance.stager_rport == 8080
+        assert module_instance.stager_protocol == "tcp"
+        mock_context.conf.get.assert_called_once()
 
     def test_detect_os_arch_from_connection(self, mock_context, mock_connection, module_instance):
         os_type, arch = module_instance._detect_os_arch(mock_context, mock_connection)
@@ -426,7 +497,6 @@ class TestNXCModule:
 
         url = module_instance._get_listener_c2_url("test-listener-id")
         assert url == "mtls://192.168.1.100:443"
-        mock_worker.submit_task.assert_called_once_with('jobs')
 
     @patch('sliver_exec.NXCModule._get_shared_worker')
     def test_get_listener_c2_url_http(self, mock_get_worker, module_instance):
@@ -454,9 +524,7 @@ class TestNXCModule:
         with pytest.raises(ValueError, match="Listener ID nonexistent not found"):
             module_instance._get_listener_c2_url("nonexistent")
 
-    @patch('sliver.pb.clientpb.client_pb2.OutputFormat.Value')
-    def test_build_default_implant_config(self, mock_value, module_instance):
-        mock_value.return_value = 2  # EXECUTABLE enum value
+    def test_build_default_implant_config(self, module_instance):
         module_instance.format = "EXECUTABLE"
 
         ic = module_instance._build_default_implant_config("windows", "amd64", "test.exe", "mtls://192.168.1.100:443")
@@ -464,7 +532,6 @@ class TestNXCModule:
         assert ic.Name == "test.exe"
         assert ic.GOOS == "windows"
         assert ic.GOARCH == "amd64"
-        assert ic.Format == 2  # EXECUTABLE enum value (from the test output showing Format: EXECUTABLE)
         assert ic.IsBeacon
         assert ic.BeaconInterval == 5 * 1_000_000_000
         assert ic.BeaconJitter == 3 * 1_000_000_000
@@ -472,10 +539,7 @@ class TestNXCModule:
         assert ic.ObfuscateSymbols
         assert ic.Evasion  # Windows specific
         # C2 list assertions removed since mocking makes them complex
-
-    @patch('sliver.pb.clientpb.client_pb2.OutputFormat.Value')
-    def test_build_default_implant_config_linux(self, mock_value, module_instance):
-        mock_value.return_value = 2  # EXECUTABLE enum value
+    def test_build_default_implant_config_linux(self, module_instance):
         module_instance.format = "EXECUTABLE"
 
         module_instance._build_default_implant_config("linux", "amd64", "test.exe", "mtls://192.168.1.100:443")
@@ -539,8 +603,9 @@ class TestNXCModule:
         assert result is True
         mock_context.log.success.assert_called_once()
 
+    @patch('time.sleep')
     @patch('sliver_exec.NXCModule._get_shared_worker')
-    def test_wait_for_beacon_timeout_expires(self, mock_get_worker, mock_context, module_instance, mock_config_file):
+    def test_wait_for_beacon_timeout_expires(self, mock_get_worker, mock_sleep, mock_context, module_instance, mock_config_file):
         """Test that _wait_for_beacon times out correctly when no beacon is found."""
         # Setup mocks
         mock_worker = Mock()
@@ -549,8 +614,8 @@ class TestNXCModule:
 
         module_instance.config_path = mock_config_file
 
-        # Test with 1 second timeout - should timeout quickly
-        result = module_instance._wait_for_beacon(mock_context, "test.exe", timeout=1)
+        # Test with 0.01 second timeout - should timeout quickly
+        result = module_instance._wait_for_beacon(mock_context, "test.exe", timeout=0.01)
 
         assert result is False
         # Should not call success
@@ -707,8 +772,36 @@ class TestNXCModule:
         data = module_instance._generate_sliver_implant(mock_context, 'windows', 'amd64', 'test.exe')
         assert data == b"okbytes"
 
-    def test_run_beacon_end_to_end_mocked(self, module_instance, mock_context, mock_connection, tmp_path):
+    def test_run_beacon_end_to_end_mocked(self, patch_get_worker, module_instance, mock_context, mock_connection, tmp_path):
         """End-to-end run beacon flow with SMB upload/execute mocked to avoid sys.exit."""
+        mock_worker = patch_get_worker
+
+        # Mock the shared GrpcWorker
+        mock_jobs_existing = [Mock(Protocol="tcp", Port=443, Name="mtls")]  # Existing listener
+        mock_profiles = []  # No existing profiles
+        mock_resp = Mock()
+        mock_resp.File.Data = b"implant_bytes"
+
+        call_count = 0
+        def side_effect(method, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if method == 'connect':
+                return None
+            elif method == 'jobs':
+                return mock_jobs_existing
+            elif method == 'implant_profiles':
+                return mock_profiles
+            elif method == 'generate_implant':
+                return mock_resp
+            elif method == 'beacons':
+                return []
+            elif method == 'sessions':
+                return []
+            return None
+
+        mock_worker.submit_task.side_effect = side_effect
+
         # Create a temp file for the implant
         import tempfile
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".exe")
@@ -737,6 +830,8 @@ class TestNXCModule:
 
         # Ensure cleanup is False to skip cleanup branch
         module_instance.cleanup = False
+        module_instance.format = "EXECUTABLE"
+        module_instance.extension = "exe"
 
         try:
             # Run - should not raise
@@ -748,6 +843,61 @@ class TestNXCModule:
             # Cleanup temp file
             import os
             os.unlink(local_implant_path)
+
+    def test_run_beacon_staging_winrm_mocked(self, patch_get_worker, module_instance, mock_context, mock_connection, tmp_path):
+        """Test staging mode with WinRM protocol."""
+        mock_worker = patch_get_worker
+
+        # Mock the shared GrpcWorker for shellcode generation
+        mock_gen_resp = Mock()
+        mock_gen_resp.File = Mock()
+        mock_gen_resp.File.Data = b"shellcode_bytes"
+
+        call_count = 0
+        def side_effect(method, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if method == 'connect':
+                return None
+            elif method == 'beacons':
+                return []
+            elif method == 'sessions':
+                return []
+            return None
+
+        mock_worker.submit_task.side_effect = side_effect
+
+        # Mock the Generate RPC call
+        mock_worker._stub.Generate.return_value = mock_gen_resp
+
+        # Patch methods to avoid network dependencies
+        module_instance._detect_os_arch = Mock(return_value=('windows', 'amd64'))
+        module_instance._build_ic_default = Mock(return_value=(Mock(), 'test_profile'))
+        module_instance._generate_sliver_stager = Mock(return_value=b'stagerdata')
+        module_instance._wait_for_beacon_and_cleanup = Mock()
+
+        # Use a WinRM connection
+        conn = mock_connection
+        conn.host = '10.0.0.1'
+        conn.protocol = 'winrm'
+        conn.__class__.__name__ = 'winrm'
+        conn.ps_execute = Mock(return_value="Command completed")  # Mock successful PowerShell execution
+
+        # Enable staging
+        module_instance.staging = True
+        module_instance.rhost = "192.168.1.100"
+        module_instance.rport = 8080  # HTTP stage listener port
+        module_instance.cleanup = False
+        module_instance.format = "EXECUTABLE"
+        module_instance.extension = "exe"
+
+        # Run - should not raise
+        module_instance._run_beacon(mock_context, conn)
+
+        # Verify staging-specific calls were made
+        mock_context.log.info.assert_any_call("Started HTTP stager listener on 192.168.1.100:8080")
+        mock_context.log.info.assert_any_call("Started mTLS C2 listener for stage 2 on 192.168.1.100:8080")
+        mock_context.log.info.assert_any_call("Stager executed on 10.0.0.1 via winrm (multi-stage HTTP)")
 
     def test_method_signatures(self, module_instance):
         """

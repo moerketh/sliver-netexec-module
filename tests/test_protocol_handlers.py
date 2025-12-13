@@ -19,6 +19,8 @@ sys.modules['sliver'] = Mock()
 sys.modules['sliver.pb'] = Mock()
 sys.modules['sliver.pb.clientpb'] = Mock()
 sys.modules['sliver.pb.clientpb'].client_pb2 = Mock()
+sys.modules['sliver.pb.rpcpb'] = Mock()
+sys.modules['sliver.pb.rpcpb'].services_pb2_grpc = Mock()
 
 # Assuming the module is in the parent directory or adjust import path as needed
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
