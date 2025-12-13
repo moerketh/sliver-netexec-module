@@ -1,0 +1,43 @@
+[tool.poetry]
+name = "sliver-nxc-module"
+version = "0.1.0"
+description = "NetExec module for Sliver beacon deployment"
+authors = ["moerketh <moerketh@example.com>"]
+readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/moerketh/sliver-netexec-module"
+repository = "https://github.com/moerketh/sliver-netexec-module"
+keywords = ["netexec", "sliver", "c2", "pentest", "redteam"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+packages = [
+    {include = "sliver", from = "src"},
+    {include = "sliver_exec.py"}
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pytest = "^9.0.1"
+grpcio = "^1.60.0"
+protobuf = "^4.25.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest-cov = "^4.1.0"
+grpcio-tools = "^1.60.0"
+
+[tool.poetry.scripts]
+generate-protobuf = "sliver.tools.generate_cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry-core.masonry.api"
