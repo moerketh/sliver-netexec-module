@@ -6,8 +6,7 @@ import base64
 import re
 from unittest.mock import Mock, patch, MagicMock
 
-# Mock nxc and sliver imports before importing the module
-sys.modules['nxc'] = Mock()
+# Mock nxc submodules (keep nxc package real)
 sys.modules['nxc.helpers'] = Mock()
 sys.modules['nxc.helpers.misc'] = Mock()
 category_mock = Mock()
@@ -22,10 +21,9 @@ sys.modules['sliver.pb.clientpb'].client_pb2 = Mock()
 sys.modules['sliver.pb.rpcpb'] = Mock()
 sys.modules['sliver.pb.rpcpb'].services_pb2_grpc = Mock()
 
-# Assuming the module is in the parent directory or adjust import path as needed
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from sliver_exec import NXCModule, SMBHandler, SSHHandler, WinRMHandler, MSSQLHandler  # noqa: E402
+from nxc.modules.sliver_exec import NXCModule, SMBHandler, SSHHandler, WinRMHandler, MSSQLHandler  # noqa: E402
+import sys
+sys.modules['sliver_exec'] = sys.modules['nxc.modules.sliver_exec']
 
 
 @pytest.fixture

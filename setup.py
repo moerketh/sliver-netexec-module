@@ -7,9 +7,7 @@ setup(
     package_dir={"": "src"},
     package_data={
         "sliver": ["**/*"],
+        "nxc": ["**/*"],
     },
-    data_files=[
-        ("nxc/modules", ["sliver_exec.py"]),
-    ],
     include_package_data=True,
 )

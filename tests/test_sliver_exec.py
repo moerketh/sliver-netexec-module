@@ -13,19 +13,16 @@ sys.modules['sliver.pb.clientpb'].client_pb2 = Mock()
 sys.modules['sliver.pb.rpcpb'] = Mock()
 sys.modules['sliver.pb.rpcpb'].services_pb2_grpc = Mock()
 
-# Mock nxc imports
-sys.modules['nxc'] = Mock()
+# Mock nxc submodules (keep nxc package real)
 sys.modules['nxc.helpers'] = Mock()
 sys.modules['nxc.helpers.misc'] = Mock()
 CATEGORY = Mock()
 CATEGORY.PRIVILEGE_ESCALATION = "PRIVILEGE_ESCALATION"
 sys.modules['nxc.helpers.misc'].CATEGORY = CATEGORY
 
-# Assuming the module is in the parent directory or adjust import path as needed
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from sliver_exec import NXCModule
-from nxc.helpers.misc import CATEGORY
+from nxc.modules.sliver_exec import NXCModule
+import sys
+sys.modules['sliver_exec'] = sys.modules['nxc.modules.sliver_exec']
 
 
 @pytest.fixture
@@ -43,7 +40,7 @@ def patch_get_worker(mock_worker, monkeypatch):
     `mock_worker.submit_task.side_effect` to simulate different gRPC responses.
     """
     # Use monkeypatch.setattr with the fully-qualified attribute name
-    monkeypatch.setattr('sliver_exec.NXCModule._get_shared_worker', lambda: mock_worker)
+    monkeypatch.setattr('nxc.modules.sliver_exec.NXCModule._get_shared_worker', lambda: mock_worker)
     return mock_worker
 
 @pytest.fixture

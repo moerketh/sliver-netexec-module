@@ -12,7 +12,9 @@ import base64
 import gzip
 import textwrap
 from abc import ABC, abstractmethod
-from nxc.helpers.misc import CATEGORY
+
+# Lazy import for nxc dependencies to support testing
+CATEGORY = None
 
 # Use local sliver protobuf bindings
 _module_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +33,17 @@ def _import_protobuf():
             from sliver.pb.rpcpb import services_pb2_grpc as rpc_grpc
         except ImportError:
             raise ImportError("Sliver protobuf bindings not available. This module should be installed with its packaged protobuf bindings.")
+
+def _import_nxc():
+    global CATEGORY
+    if CATEGORY is None:
+        try:
+            from nxc.helpers.misc import CATEGORY
+        except ImportError:
+            # For testing, create a mock CATEGORY
+            from unittest.mock import Mock
+            CATEGORY = Mock()
+            CATEGORY.PRIVILEGE_ESCALATION = "PRIVILEGE_ESCALATION"
 
 # Initialize globals to None for lazy loading
 SliverClientConfig = None
@@ -551,6 +564,9 @@ class MSSQLHandler(ProtocolHandler):
     def get_cleanup_cmd(self, full_remote_path, os_type):
         return f"del /f /q \"{full_remote_path}\""
 
+
+# Import nxc dependencies lazily
+_import_nxc()
 
 class NXCModule:
     """
