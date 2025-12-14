@@ -19,16 +19,16 @@ classifiers = [
 ]
 packages = [
     {include = "sliver", from = "src"},
-    {include = "sliver_exec.py"}
+    {include = "sliver_exec.py", to = "nxc/modules"}
 ]
 
 [tool.poetry.dependencies]
-python = "^3.12"
-pytest = "^9.0.1"
+python = "^3.10"
 grpcio = "^1.60.0"
 protobuf = "^4.25.0"
 
 [tool.poetry.group.dev.dependencies]
+pytest = "^9.0.1"
 pytest-cov = "^4.1.0"
 grpcio-tools = "^1.60.0"
 
