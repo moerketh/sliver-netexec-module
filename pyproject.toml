@@ -17,11 +17,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Security",
 ]
-packages = [
-    {include = "sliver", from = "src"},
-    {include = "sliver_exec.py", to = "nxc/modules"}
-]
-
 [tool.poetry.dependencies]
 python = "^3.10"
 grpcio = "^1.60.0"
@@ -39,5 +34,5 @@ generate-protobuf = "sliver.tools.generate_cli:main"
 pythonpath = ["src"]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry-core.masonry.api"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
