@@ -104,21 +104,31 @@ class GrpcWorker:
         _import_protobuf()
         if config_path is None:
             raise ValueError("Sliver config_path cannot be None. Ensure a valid path is set in module config.")
+        cfg = SliverClientConfig.parse_config_file(config_path)
+        if not all([cfg.ca_certificate, cfg.certificate, cfg.private_key]):
+            raise ValueError("Sliver config missing certificates")
         if self.client is None or self.config_path != config_path:
-            cfg = SliverClientConfig.parse_config_file(config_path)
-            if not all([cfg.ca_certificate, cfg.certificate, cfg.private_key]):
-                raise ValueError("Sliver config missing certificates")
-            
             self.config_path = config_path
             self.client = SliverClient(cfg)
-            
-
+            self.connected = False
         if not self.connected:
-            await self.client.connect()
-            self.connected = True
-            # Patch client for raw staging RPCs
-            self.client.raw_stub = self.client._stub
-
+            try:
+                await self.client.connect()
+                self.connected = True
+                # Patch client for raw staging RPCs
+                self.client.raw_stub = self.client._stub
+            except Exception as connect_e:
+                error_str = str(connect_e).lower()
+                if "connection refused" in error_str or ("unavailable" in error_str and "failed to connect" in error_str):
+                    host = getattr(cfg, 'server_host', '127.0.0.1')
+                    port = getattr(cfg, 'server_port', 31337)
+                    raise ValueError(
+                        f"Failed to connect to Sliver server at {host}:{port}. "
+                        "Ensure the Sliver server is running (`sliver-server`) and reachable. "
+                        "If using proxychains, add `localnet {host} {port}` to proxychains.conf."
+                    ) from connect_e
+                else:
+                    raise RuntimeError(f"Sliver client connection error: {connect_e}") from connect_e
         return self.client
 
     async def _do_jobs(self):
