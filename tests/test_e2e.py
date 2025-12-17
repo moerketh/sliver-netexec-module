@@ -113,3 +113,35 @@ class TestE2E:
         assert 'sliver_exec' in result.stdout, "sliver_exec module not found in MSSQL module list"
         assert 'Generates unique Sliver beacon and executes on target' in result.stdout, \
                "sliver_exec module description not found in MSSQL output"
+
+    def test_package_contains_required_files(self):
+        """
+        Test that the built wheel package contains both the sliver_exec module
+        and the required Sliver protobuf bindings.
+        """
+        import zipfile
+        import glob
+
+        # Find the wheel file
+        whl_files = glob.glob("dist/*.whl")
+        assert len(whl_files) > 0, "No wheel file found in dist/"
+
+        whl_path = whl_files[0]
+
+        # Open the wheel and get file list
+        with zipfile.ZipFile(whl_path, 'r') as whl:
+            file_list = whl.namelist()
+
+        # Check that sliver_exec.py is included
+        assert any('nxc/modules/sliver_exec.py' in f for f in file_list), \
+               "sliver_exec.py not found in wheel"
+
+        # Check that Sliver protobuf bindings are included
+        protobuf_files = [f for f in file_list if 'sliver/pb/' in f and f.endswith('.py')]
+        assert len(protobuf_files) > 0, "No Sliver protobuf files found in wheel"
+
+        # Check for specific expected protobuf modules
+        expected_modules = ['clientpb', 'rpcpb', 'sliverpb', 'commonpb']
+        for module in expected_modules:
+            assert any(module in f for f in protobuf_files), \
+                   f"Protobuf module {module} not found in wheel"

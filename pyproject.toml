@@ -26,6 +26,7 @@ packages = [
 python = "^3.10"
 grpcio = "^1.60.0"
 protobuf = "^4.25.0"
+sliver = "*"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.1"

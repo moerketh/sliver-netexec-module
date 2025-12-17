@@ -10,4 +10,9 @@ setup(
         "nxc": ["**/*"],
     },
     include_package_data=True,
+    install_requires=[
+        "grpcio>=1.60.0",
+        "protobuf>=4.25.0",
+        "sliver",
+    ],
 )
