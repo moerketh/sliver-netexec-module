@@ -26,7 +26,7 @@ def _import_protobuf():
             from sliver.pb.rpcpb import services_pb2 as rpcpb
             from sliver.pb.rpcpb import services_pb2_grpc as rpc_grpc
         except ImportError:
-            raise ImportError("Sliver client not available. Please ensure sliver-py is installed.")
+            raise ImportError("Sliver client not available. This module should be installed with its packaged protobuf bindings.")
 
 def _import_nxc():
     global CATEGORY
