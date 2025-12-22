@@ -142,8 +142,8 @@ class GrpcWorker:
         req = clientpb.StagerListenerReq()
         req.Host = host
         req.Port = port
-        # Raw RPC call
-        resp = await client.raw_stub.StartTCPStagerListener(req, timeout=30)
+        req.Protocol = clientpb.StageProtocol.TCP
+        resp = await client.raw_stub.StartStagerListener(req, timeout=30)
         return resp
 
     async def _do_implant_profiles(self):
@@ -180,7 +180,11 @@ class GrpcWorker:
         return resp
     
     async def _do_start_stager_listener(self, host, port, protocol):
-        """Start stager listener (HTTP or TCP based on protocol)."""
+        """Start stager listener (HTTP or TCP based on protocol).
+        
+        Sliver 1.5.44+ uses a single StartStagerListener RPC with StageProtocol enum
+        to differentiate between TCP, HTTP, and HTTPS staging listeners.
+        """
         client = await self._do_connect(self.config_path)
         _import_protobuf()
         req = clientpb.StagerListenerReq()
@@ -189,12 +193,14 @@ class GrpcWorker:
         # Set enum (StageProtocol: TCP=0, HTTP=1, HTTPS=2)
         if protocol == "tcp":
             req.Protocol = clientpb.StageProtocol.TCP
-            resp = await client.raw_stub.StartTCPStagerListener(req, timeout=30)
         elif protocol == "http":
             req.Protocol = clientpb.StageProtocol.HTTP
-            resp = await client.raw_stub.StartHTTPStagerListener(req, timeout=30)
+        elif protocol == "https":
+            req.Protocol = clientpb.StageProtocol.HTTPS
         else:
-            raise ValueError(f"Unsupported STAGER_PROTOCOL: {protocol} (use 'http' or 'tcp')")
+            raise ValueError(f"Unsupported STAGER_PROTOCOL: {protocol} (use 'tcp', 'http', or 'https')")
+        # Use single StartStagerListener RPC for all protocols (Sliver 1.5.44 API)
+        resp = await client.raw_stub.StartStagerListener(req, timeout=30)
         return resp
 
     async def _do_generate_shellcode(self, ic):
@@ -704,8 +710,8 @@ class NXCModule:
         staging_enabled = module_options.get("STAGING", "False").lower() in ("true", "1", "yes")
         if staging_enabled:
             stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
-            if stager_protocol not in ["http", "tcp"]:
-                context.log.fail("STAGER_PROTOCOL must be 'http' or 'tcp' (default: http)")
+            if stager_protocol not in ["http", "tcp", "https"]:
+                context.log.fail("STAGER_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
                 sys.exit(1)
 
             # Validate STAGER_RHOST if provided

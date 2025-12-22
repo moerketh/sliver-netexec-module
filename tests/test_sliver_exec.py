@@ -223,7 +223,7 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGER_PROTOCOL must be 'http' or 'tcp' (default: http)")
+        mock_context.log.fail.assert_called_once_with("STAGER_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
 
 
 
@@ -917,3 +917,153 @@ class TestNXCModule:
                 f"Method {method_name} has {actual_params} parameters, expected {expected_params}. "
                 f"Signature: {sig}"
             )
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_start_stager_listener_tcp(self):
+        """Test StartStagerListener RPC with TCP protocol (Sliver 1.5.44 API)."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client and protobuf
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client.raw_stub = mock_stub
+        
+        # Mock protobuf classes
+        mock_req = Mock()
+        mock_resp = Mock()
+        mock_resp.Job = 1
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.StartStagerListener = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_clientpb.StagerListenerReq = Mock(return_value=mock_req)
+                mock_clientpb.StageProtocol = Mock(TCP=0)
+                
+                result = await worker._do_start_stager_listener("127.0.0.1", 8080, "tcp")
+                
+                assert result == mock_resp
+                # Verify protocol enum was set correctly
+                assert mock_req.Protocol == 0  # TCP
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_start_stager_listener_http(self):
+        """Test StartStagerListener RPC with HTTP protocol (Sliver 1.5.44 API)."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client and protobuf
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client.raw_stub = mock_stub
+        
+        mock_req = Mock()
+        mock_resp = Mock()
+        mock_resp.Job = 2
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.StartStagerListener = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_clientpb.StagerListenerReq = Mock(return_value=mock_req)
+                mock_clientpb.StageProtocol = Mock(HTTP=1)
+                
+                result = await worker._do_start_stager_listener("127.0.0.1", 8080, "http")
+                
+                assert result == mock_resp
+                # Verify protocol enum was set correctly
+                assert mock_req.Protocol == 1  # HTTP
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_start_stager_listener_https(self):
+        """Test StartStagerListener RPC with HTTPS protocol (Sliver 1.5.44 API)."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client and protobuf
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client.raw_stub = mock_stub
+        
+        mock_req = Mock()
+        mock_resp = Mock()
+        mock_resp.Job = 3
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.StartStagerListener = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_clientpb.StagerListenerReq = Mock(return_value=mock_req)
+                mock_clientpb.StageProtocol = Mock(HTTPS=2)
+                
+                result = await worker._do_start_stager_listener("127.0.0.1", 8080, "https")
+                
+                assert result == mock_resp
+                # Verify protocol enum was set correctly
+                assert mock_req.Protocol == 2  # HTTPS
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_start_stager_listener_invalid_protocol(self):
+        """Test StartStagerListener RPC with invalid protocol raises ValueError."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        mock_client = Mock()
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb'):
+                with pytest.raises(ValueError, match="Unsupported STAGER_PROTOCOL"):
+                    await worker._do_start_stager_listener("127.0.0.1", 8080, "invalid")
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_start_tcp_stager_listener_uses_start_stager_listener(self):
+        """Test _do_start_tcp_stager_listener uses StartStagerListener RPC (not StartTCPStagerListener)."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client and protobuf
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client.raw_stub = mock_stub
+        
+        mock_req = Mock()
+        mock_resp = Mock()
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.StartStagerListener = mock_rpc
+        # Ensure StartTCPStagerListener doesn't exist (should not be called)
+        if hasattr(mock_stub, 'StartTCPStagerListener'):
+            delattr(mock_stub, 'StartTCPStagerListener')
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_clientpb.StagerListenerReq = Mock(return_value=mock_req)
+                mock_clientpb.StageProtocol = Mock(TCP=0)
+                
+                result = await worker._do_start_tcp_stager_listener("127.0.0.1", 8080)
+                
+                assert result == mock_resp
+                # Verify the correct RPC method exists and was called
+                assert hasattr(mock_stub, 'StartStagerListener')
