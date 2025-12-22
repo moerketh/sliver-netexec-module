@@ -18,15 +18,15 @@ classifiers = [
     "Topic :: Security",
 ]
 packages = [
-    {include = "sliver", from = "src"},
+    {include = "sliver_client", from = "src"},
     {include = "nxc", from = "src"}
 ]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 grpcio = "^1.60.0"
-protobuf = "^4.25.0"
-sliver = "*"
+protobuf = ">=5.26.1,<7.0"
+sliver-py = {git = "https://github.com/moerketh/sliver-py.git", branch = "update"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.1"

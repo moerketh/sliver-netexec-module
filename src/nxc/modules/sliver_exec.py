@@ -16,12 +16,6 @@ from abc import ABC, abstractmethod
 # Lazy import for nxc dependencies to support testing
 CATEGORY = None
 
-# Use local sliver protobuf bindings
-_module_dir = os.path.dirname(os.path.abspath(__file__))
-_src_dir = os.path.join(_module_dir, 'src')
-if _src_dir not in sys.path:
-    sys.path.insert(0, _src_dir)
-
 def _import_protobuf():
     global SliverClientConfig, SliverClient, grpc, clientpb, rpcpb, rpc_grpc
     if 'SliverClientConfig' not in globals() or SliverClientConfig is None:
@@ -32,7 +26,7 @@ def _import_protobuf():
             from sliver.pb.rpcpb import services_pb2 as rpcpb
             from sliver.pb.rpcpb import services_pb2_grpc as rpc_grpc
         except ImportError:
-            raise ImportError("Sliver protobuf bindings not available. This module should be installed with its packaged protobuf bindings.")
+            raise ImportError("Sliver client not available. Please ensure sliver-py is installed.")
 
 def _import_nxc():
     global CATEGORY

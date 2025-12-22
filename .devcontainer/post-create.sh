@@ -15,9 +15,6 @@ poetry install
 echo "Initializing git submodules..."
 git submodule update --init --recursive
 
-echo "Generating protobuf bindings..."
-poetry run generate-protobuf
-
 echo "Installing netexec (latest from git) in a separate virtualenv..."
 # Create a separate venv for netexec to avoid slowing down project tests
 NETEXEC_VENV="$HOME/netexec-venv"
@@ -39,8 +36,8 @@ print(p[0])')"
 
 MODULES_DIR="$SITE_PACKAGES/nxc/modules"
 mkdir -p "$MODULES_DIR"
-ln -sf "/workspaces/sliver-nxc-module/sliver_exec.py" "$MODULES_DIR/sliver_exec.py"
-echo "Created symlink: $MODULES_DIR/sliver_exec.py -> /workspaces/sliver-nxc-module/sliver_exec.py"
+ln -sf "/workspaces/sliver-nxc-module/src/nxc/modules/sliver_exec.py" "$MODULES_DIR/sliver_exec.py"
+echo "Created symlink: $MODULES_DIR/sliver_exec.py -> /workspaces/sliver-nxc-module/src/nxc/modules/sliver_exec.py"
 
 # Add to PATH for the session
 export PATH="$NETEXEC_VENV/bin:$PATH"
