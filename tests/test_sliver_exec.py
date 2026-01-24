@@ -284,6 +284,24 @@ class TestNXCModule:
         assert module_instance.stager_rhost == "192.168.1.100"
         assert module_instance.stager_rport == 443
         mock_context.conf.get.assert_called_once()
+    
+    def test_options_beacon_interval_jitter(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that BEACON_INTERVAL and BEACON_JITTER options are parsed correctly"""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["BEACON_INTERVAL"] = "10"
+        mock_module_options["BEACON_JITTER"] = "5"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.beacon_interval == 10
+        assert module_instance.beacon_jitter == 5
+        mock_context.conf.get.assert_called_once()
+    
+    def test_options_beacon_defaults(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that beacon options default to 5s interval and 3s jitter"""
+        mock_context.conf.get.return_value = mock_config_file
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.beacon_interval == 5
+        assert module_instance.beacon_jitter == 3
+        mock_context.conf.get.assert_called_once()
 
     def test_detect_os_arch_from_connection(self, mock_context, mock_connection, module_instance):
         os_type, arch = module_instance._detect_os_arch(mock_context, mock_connection)
@@ -1089,7 +1107,7 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGER_PORT must be a valid port number (1-65535): 99999")
+        mock_context.log.fail.assert_called_once_with("STAGING_PORT must be a valid port number (1-65535): 99999")
 
     def test_options_invalid_stager_port_non_numeric(self, mock_context, mock_module_options):
         """Test non-numeric STAGER_PORT validation."""
@@ -1098,7 +1116,7 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGER_PORT must be a valid port number (1-65535): not-a-number")
+        mock_context.log.fail.assert_called_once_with("STAGING_PORT must be a valid port number (1-65535): not-a-number")
 
     def test_options_invalid_staging_method(self, mock_context, mock_module_options):
         """Test invalid STAGING_METHOD validation."""
@@ -1107,7 +1125,7 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGING_METHOD must be one of: powershell, certutil, bitsadmin, wget, curl, python (default: powershell)")
+        mock_context.log.fail.assert_called_once_with("DOWNLOAD_TOOL must be one of: powershell, certutil, bitsadmin, wget, curl, python (default: powershell)")
 
     def test_options_valid_with_http_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test valid options with HTTP staging enabled."""
@@ -1423,6 +1441,58 @@ class TestNXCModule:
         mock_worker.submit_task.assert_any_call('website_remove', "website_abc")
         # Verify file cleanup was also called
         conn.ps_execute.assert_called_once()
+    
+    def test_options_staging_new_syntax_http(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test new STAGING=http syntax"""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging is True
+        assert module_instance.stager_protocol == "http"
+        mock_context.conf.get.assert_called_once()
+    
+    def test_options_staging_new_syntax_tcp(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test new STAGING=tcp syntax"""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "tcp"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging is True
+        assert module_instance.stager_protocol == "tcp"
+        mock_context.conf.get.assert_called_once()
+    
+    def test_options_staging_port_new_name(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test STAGING_PORT (new name) instead of STAGER_PORT"""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "9090"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging is True
+        assert module_instance.stager_port == 9090
+        mock_context.conf.get.assert_called_once()
+    
+    def test_options_download_tool_new_name(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test DOWNLOAD_TOOL (new name) instead of STAGING_METHOD"""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["DOWNLOAD_TOOL"] = "certutil"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging is True
+        assert module_instance.staging_method == "certutil"
+        mock_context.conf.get.assert_called_once()
+    
+    def test_options_staging_backward_compat(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test backward compatibility with old STAGING=True + STAGER_PROTOCOL syntax"""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PROTOCOL"] = "tcp"
+        mock_module_options["STAGER_PORT"] = "8888"
+        mock_module_options["STAGING_METHOD"] = "powershell"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging is True
+        assert module_instance.stager_protocol == "tcp"
+        assert module_instance.stager_port == 8888
+        assert module_instance.staging_method == "powershell"
+        mock_context.conf.get.assert_called_once()
 
     def test_bootstrap_stager_payload_under_150kb_limit(self, module_instance):
         """Test that HTTP bootstrap stager stays under WinRM 150KB envelope limit.
