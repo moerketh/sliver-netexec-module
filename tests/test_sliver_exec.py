@@ -164,7 +164,7 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("Either RHOST+RPORT OR PROFILE must be provided")
+        mock_context.log.fail.assert_called_once_with("Either RHOST OR PROFILE must be provided")
 
     def test_options_invalid_format(self, mock_context, mock_module_options):
         mock_module_options["FORMAT"] = "dll"
@@ -250,6 +250,15 @@ class TestNXCModule:
         assert module_instance.format == "EXECUTABLE"
         assert module_instance.extension == "exe"
         mock_context.conf.get.assert_called_once()
+    
+    def test_options_rhost_only_defaults_rport(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that RPORT defaults to 443 when only RHOST is provided"""
+        mock_context.conf.get.return_value = mock_config_file
+        del mock_module_options["RPORT"]
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.rhost == "192.168.1.100"
+        assert module_instance.rport == 443
+        mock_context.conf.get.assert_called_once()
 
     def test_options_valid_with_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         mock_context.conf.get.return_value = mock_config_file
@@ -264,6 +273,16 @@ class TestNXCModule:
         assert module_instance.stager_rhost == "10.0.0.1"
         assert module_instance.stager_rport == 8080
         assert module_instance.stager_protocol == "tcp"
+        mock_context.conf.get.assert_called_once()
+    
+    def test_options_staging_defaults_stager_rhost(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that STAGER_RHOST defaults to RHOST when staging is enabled"""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.rhost == "192.168.1.100"
+        assert module_instance.stager_rhost == "192.168.1.100"
+        assert module_instance.stager_rport == 443
         mock_context.conf.get.assert_called_once()
 
     def test_detect_os_arch_from_connection(self, mock_context, mock_connection, module_instance):

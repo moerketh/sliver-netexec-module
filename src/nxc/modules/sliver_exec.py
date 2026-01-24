@@ -766,17 +766,16 @@ class NXCModule:
                 sys.exit(1)
 
         # Acceptable option sets:
-        #  - RHOST + RPORT (remote host mode)
+        #  - RHOST (with optional RPORT, defaults to 443)
         #  - PROFILE (use existing profile)
-        has_rhost = bool(module_options.get("RHOST") is not None and module_options.get("RPORT") is not None)
-        # PROFILE alone
+        has_rhost = bool(module_options.get("RHOST") is not None)
         has_profile = bool(module_options.get("PROFILE") is not None)
 
         if not (has_rhost or has_profile):
-            context.log.fail("Either RHOST+RPORT OR PROFILE must be provided")
+            context.log.fail("Either RHOST OR PROFILE must be provided")
             sys.exit(1)
 
-        # If RHOST/RPORT provided, validate them
+        # If RHOST provided, validate it and optional RPORT
         if has_rhost:
             # Validate RHOST is a valid IPv4 address
             import ipaddress
@@ -786,14 +785,15 @@ class NXCModule:
                 context.log.fail(f"RHOST must be a valid IPv4 address: {module_options['RHOST']}")
                 sys.exit(1)
 
-            # Validate RPORT is a valid port number (1-65535)
-            try:
-                port = int(module_options["RPORT"])
-                if not (1 <= port <= 65535):
-                    raise ValueError()
-            except (ValueError, TypeError):
-                context.log.fail(f"RPORT must be a valid port number (1-65535): {module_options['RPORT']}")
-                sys.exit(1)
+            # Validate RPORT if provided (optional, defaults to 443)
+            if module_options.get("RPORT"):
+                try:
+                    port = int(module_options["RPORT"])
+                    if not (1 <= port <= 65535):
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    context.log.fail(f"RPORT must be a valid port number (1-65535): {module_options['RPORT']}")
+                    sys.exit(1)
 
         # If PROFILE provided, validate simple presence (more validation occurs later)
         if has_profile:
@@ -853,31 +853,53 @@ class NXCModule:
         self.implant_base_path = module_options.get("IMPLANT_BASE_PATH", "/tmp")
         if not os.path.exists(self.implant_base_path):
             context.log.warning(f"IMPLANT_BASE_PATH {self.implant_base_path} does not exist locally.")
-        # RHOST/RPORT may be absent when using PROFILE+LISTENER mode
+        
+        # Parse RHOST and RPORT (RPORT defaults to 443 if not specified)
         self.rhost = module_options.get("RHOST", None)
-        self.rport = int(module_options["RPORT"]) if "RPORT" in module_options and module_options.get("RPORT") is not None else None
+        if "RPORT" in module_options and module_options.get("RPORT") is not None:
+            self.rport = int(module_options["RPORT"])
+        else:
+            # Default RPORT to 443 if RHOST is provided
+            self.rport = 443 if self.rhost else None
+        
         self.cleanup = module_options.get("CLEANUP", "True").lower() in ("true", "1", "yes")
         self.staging = module_options.get("STAGING", "False").lower() in ("true", "1", "yes")
         self.os_type = module_options.get("OS", None)
         self.arch = module_options.get("ARCH", None)
         self.share_config = module_options.get("SHARE", None)  # Optional, used by SMB
         self.wait_seconds = int(module_options.get("WAIT", "90"))
+        
         # PROFILE mode
         self.profile = module_options.get("PROFILE", None)
         if self.profile:
             context.log.display(f"Using Sliver profile: {self.profile}")
+        
+        # Parse staging options
         if self.staging:
-            self.stager_rhost = module_options.get("STAGER_RHOST", None)
-            self.stager_rport = int(module_options["STAGER_RPORT"]) if "STAGER_RPORT" in module_options and module_options.get("STAGER_RPORT") is not None else None
+            # STAGER_RHOST defaults to RHOST (same server for staging and C2)
+            self.stager_rhost = module_options.get("STAGER_RHOST") or self.rhost
+            
+            # STAGER_RPORT defaults to RPORT if not specified
+            stager_rport_value = module_options.get("STAGER_RPORT")
+            self.stager_rport = int(stager_rport_value) if stager_rport_value is not None else self.rport
+            
+            # STAGER_PORT (for HTTP download staging)
             stager_port_value = module_options.get("STAGER_PORT")
             self.stager_port = int(stager_port_value) if stager_port_value is not None else 8080
+            
+            # STAGER_PROTOCOL defaults to http
             stager_protocol_value = module_options.get("STAGER_PROTOCOL")
             self.stager_protocol = stager_protocol_value.lower() if stager_protocol_value is not None else "http"
+            
+            # STAGING_METHOD defaults to powershell
             staging_method_value = module_options.get("STAGING_METHOD")
             self.staging_method = staging_method_value.lower() if staging_method_value is not None else "powershell"
-            context.log.display(f"HTTP staging: {self.stager_rhost or self.rhost}:{self.stager_port}")
+            
+            # Display staging configuration
+            context.log.display(f"HTTP staging: {self.stager_rhost}:{self.stager_port}")
             context.log.display(f"Staging method: {self.staging_method}")
             context.log.display(f"Final C2: {self.rhost}:{self.rport} (mTLS)")
+        
         fmt = module_options.get("FORMAT", "exe").lower()
         if fmt not in ["exe", "executable"]:
             context.log.fail("Only EXECUTABLE format supported. Use: exe")

