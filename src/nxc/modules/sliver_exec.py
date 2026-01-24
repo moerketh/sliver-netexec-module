@@ -770,7 +770,7 @@ class NXCModule:
         for key in module_options:
             if key not in known_options:
                 context.log.fail(f"Unknown option: {key}")
-                context.log.fail("Valid options: RHOST, RPORT, STAGING, STAGING_PORT, DOWNLOAD_TOOL, BEACON_INTERVAL, BEACON_JITTER, OS, ARCH, CLEANUP, WAIT, PROFILE")
+                context.log.fail("Valid options: RHOST, RPORT, STAGING, STAGING_PORT, DOWNLOAD_TOOL, BEACON_INTERVAL, BEACON_JITTER, OS, ARCH, CLEANUP_MODE, WAIT, PROFILE")
                 context.log.fail("See: nxc <protocol> -M sliver_exec --options")
                 sys.exit(1)
 
@@ -894,6 +894,45 @@ class NXCModule:
                 context.log.fail("  -o CLEANUP_MODE=always    # Always cleanup (default)")
                 context.log.fail("  -o CLEANUP_MODE=success   # Only cleanup if beacon registered")
                 context.log.fail("  -o CLEANUP_MODE=never     # Never cleanup")
+                sys.exit(1)
+        
+        # Validate BEACON_INTERVAL if provided
+        beacon_interval = module_options.get("BEACON_INTERVAL")
+        if beacon_interval:
+            try:
+                interval = int(beacon_interval)
+                if interval < 1 or interval > 3600:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                context.log.fail(f"BEACON_INTERVAL must be between 1-3600 seconds: {beacon_interval}")
+                context.log.fail("")
+                context.log.fail("Example: -o BEACON_INTERVAL=10")
+                sys.exit(1)
+        
+        # Validate BEACON_JITTER if provided
+        beacon_jitter = module_options.get("BEACON_JITTER")
+        if beacon_jitter:
+            try:
+                jitter = int(beacon_jitter)
+                if jitter < 0 or jitter > 3600:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                context.log.fail(f"BEACON_JITTER must be between 0-3600 seconds: {beacon_jitter}")
+                context.log.fail("")
+                context.log.fail("Example: -o BEACON_JITTER=3")
+                sys.exit(1)
+        
+        # Validate WAIT if provided
+        wait = module_options.get("WAIT")
+        if wait:
+            try:
+                wait_val = int(wait)
+                if wait_val < 1 or wait_val > 3600:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                context.log.fail(f"WAIT must be between 1-3600 seconds: {wait}")
+                context.log.fail("")
+                context.log.fail("Example: -o WAIT=120")
                 sys.exit(1)
 
     def _parse_module_options(self, context, module_options):

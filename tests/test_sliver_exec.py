@@ -1628,3 +1628,112 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         mock_handler.get_cleanup_cmd.assert_not_called()
 
+    def test_options_beacon_interval_valid(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test valid BEACON_INTERVAL values."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["BEACON_INTERVAL"] = "10"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.beacon_interval == 10
+
+    def test_options_beacon_interval_too_low(self, mock_context, mock_module_options):
+        """Test BEACON_INTERVAL below minimum (1 second)."""
+        mock_module_options["BEACON_INTERVAL"] = "0"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_INTERVAL must be between 1-3600 seconds: 0"
+
+    def test_options_beacon_interval_too_high(self, mock_context, mock_module_options):
+        """Test BEACON_INTERVAL above maximum (3600 seconds)."""
+        mock_module_options["BEACON_INTERVAL"] = "3601"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_INTERVAL must be between 1-3600 seconds: 3601"
+
+    def test_options_beacon_interval_non_numeric(self, mock_context, mock_module_options):
+        """Test non-numeric BEACON_INTERVAL."""
+        mock_module_options["BEACON_INTERVAL"] = "not-a-number"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_INTERVAL must be between 1-3600 seconds: not-a-number"
+
+    def test_options_beacon_jitter_valid(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test valid BEACON_JITTER values."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["BEACON_JITTER"] = "5"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.beacon_jitter == 5
+
+    def test_options_beacon_jitter_zero(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test BEACON_JITTER can be zero."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["BEACON_JITTER"] = "0"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.beacon_jitter == 0
+
+    def test_options_beacon_jitter_too_high(self, mock_context, mock_module_options):
+        """Test BEACON_JITTER above maximum (3600 seconds)."""
+        mock_module_options["BEACON_JITTER"] = "3601"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_JITTER must be between 0-3600 seconds: 3601"
+
+    def test_options_beacon_jitter_negative(self, mock_context, mock_module_options):
+        """Test BEACON_JITTER cannot be negative."""
+        mock_module_options["BEACON_JITTER"] = "-1"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_JITTER must be between 0-3600 seconds: -1"
+
+    def test_options_beacon_jitter_non_numeric(self, mock_context, mock_module_options):
+        """Test non-numeric BEACON_JITTER."""
+        mock_module_options["BEACON_JITTER"] = "not-a-number"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_JITTER must be between 0-3600 seconds: not-a-number"
+
+    def test_options_wait_valid(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test valid WAIT values."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["WAIT"] = "120"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.wait_seconds == 120
+
+    def test_options_wait_too_low(self, mock_context, mock_module_options):
+        """Test WAIT below minimum (1 second)."""
+        mock_module_options["WAIT"] = "0"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: 0"
+
+    def test_options_wait_too_high(self, mock_context, mock_module_options):
+        """Test WAIT above maximum (3600 seconds)."""
+        mock_module_options["WAIT"] = "3601"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: 3601"
+
+    def test_options_wait_non_numeric(self, mock_context, mock_module_options):
+        """Test non-numeric WAIT."""
+        mock_module_options["WAIT"] = "not-a-number"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: not-a-number"
+
