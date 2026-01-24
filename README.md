@@ -179,7 +179,7 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 | `BEACON_JITTER` | `3` | Beacon callback jitter in seconds |
 | `OS` | Auto-detect | Target OS (`windows` or `linux`) |
 | `ARCH` | `amd64` | Target architecture |
-| `CLEANUP` | `True` | Remove artifacts after beacon callback |
+| `CLEANUP_MODE` | `always` | When to cleanup: `always`, `success` (only if beacon registers), or `never` |
 | `WAIT` | `90` | Seconds to wait for beacon |
 
 *\* Either `RHOST` or `PROFILE` must be provided*

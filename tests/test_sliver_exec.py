@@ -164,7 +164,9 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("Either RHOST OR PROFILE must be provided")
+        # Check first call (error message with examples is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "Either RHOST OR PROFILE must be provided"
 
     def test_options_invalid_format(self, mock_context, mock_module_options):
         mock_module_options["FORMAT"] = "dll"
@@ -178,21 +180,27 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("RHOST must be a valid IPv4 address: invalid.ip.address")
+        # Check first call (error message with examples is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "RHOST must be a valid IPv4 address: invalid.ip.address"
 
     def test_options_invalid_rport(self, mock_context, mock_module_options):
         mock_module_options["RPORT"] = "99999"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("RPORT must be a valid port number (1-65535): 99999")
+        # Check first call (error message with examples is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "RPORT must be a valid port number (1-65535): 99999"
 
     def test_options_invalid_rport_non_numeric(self, mock_context, mock_module_options):
         mock_module_options["RPORT"] = "not-a-number"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("RPORT must be a valid port number (1-65535): not-a-number")
+        # Check first call (error message with examples is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "RPORT must be a valid port number (1-65535): not-a-number"
 
     def test_options_invalid_stager_rhost(self, mock_context, mock_module_options):
         mock_module_options["STAGING"] = "True"
@@ -234,14 +242,16 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("Unknown option: UNKNOWN_OPTION")
+        # Check first call (error message with valid options list is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "Unknown option: UNKNOWN_OPTION"
 
     def test_options_valid(self, mock_context, mock_module_options, module_instance, mock_config_file):
         mock_context.conf.get.return_value = mock_config_file
         module_instance.options(mock_context, mock_module_options)
         assert module_instance.rhost == "192.168.1.100"
         assert module_instance.rport == 443
-        assert module_instance.cleanup is True
+        assert module_instance.cleanup_mode == "always"
         assert module_instance.staging is False
         assert module_instance.stager_rhost is None
         assert module_instance.stager_rport is None
@@ -865,8 +875,7 @@ class TestNXCModule:
         conn.conn.putFile = Mock()
         conn.execute = Mock()
 
-        # Ensure cleanup is False to skip cleanup branch
-        module_instance.cleanup = False
+        module_instance.cleanup_mode = "never"
         module_instance.format = "EXECUTABLE"
         module_instance.extension = "exe"
 
@@ -923,8 +932,8 @@ class TestNXCModule:
         # Enable staging
         module_instance.staging = True
         module_instance.rhost = "192.168.1.100"
-        module_instance.rport = 8080  # HTTP stage listener port
-        module_instance.cleanup = False
+        module_instance.rport = 8080
+        module_instance.cleanup_mode = "never"
         module_instance.format = "EXECUTABLE"
         module_instance.extension = "exe"
 
@@ -1107,7 +1116,9 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGING_PORT must be a valid port number (1-65535): 99999")
+        # Check first call (error message with examples is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "STAGING_PORT must be a valid port number (1-65535): 99999"
 
     def test_options_invalid_stager_port_non_numeric(self, mock_context, mock_module_options):
         """Test non-numeric STAGER_PORT validation."""
@@ -1116,7 +1127,9 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGING_PORT must be a valid port number (1-65535): not-a-number")
+        # Check first call (error message with examples is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "STAGING_PORT must be a valid port number (1-65535): not-a-number"
 
     def test_options_invalid_staging_method(self, mock_context, mock_module_options):
         """Test invalid STAGING_METHOD validation."""
@@ -1125,7 +1138,9 @@ class TestNXCModule:
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("DOWNLOAD_TOOL must be one of: powershell, certutil, bitsadmin, wget, curl, python (default: powershell)")
+        # Check first call (error message with examples is multi-line)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "DOWNLOAD_TOOL must be one of: powershell, certutil, bitsadmin, wget, curl, python (default: powershell)"
 
     def test_options_valid_with_http_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test valid options with HTTP staging enabled."""
@@ -1384,7 +1399,7 @@ class TestNXCModule:
         module_instance.staging = True
         module_instance.stager_port = 8080
         module_instance.staging_method = "powershell"
-        module_instance.cleanup = True
+        module_instance.cleanup_mode = "always"
         module_instance.format = "EXECUTABLE"
         module_instance.extension = "exe"
         
@@ -1431,7 +1446,7 @@ class TestNXCModule:
             "implant_test",
             mock_handler,
             "winrm",
-            cleanup=True,
+            cleanup_mode="always",
             listener_job_id=123,
             website_name="website_abc"
         )
@@ -1548,4 +1563,68 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         assert total_size < 10 * 1024, f"Bootstrap payload {total_size} bytes is larger than expected (~2-5KB range)"
         
         print(f"✓ Bootstrap stager payload: {total_size} bytes (< 150KB limit, target ~2-5KB)")
+
+    def test_options_cleanup_mode_always(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test CLEANUP_MODE=always parsing."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["CLEANUP_MODE"] = "always"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.cleanup_mode == "always"
+
+    def test_options_cleanup_mode_success(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test CLEANUP_MODE=success parsing."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["CLEANUP_MODE"] = "success"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.cleanup_mode == "success"
+
+    def test_options_cleanup_mode_never(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test CLEANUP_MODE=never parsing."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["CLEANUP_MODE"] = "never"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.cleanup_mode == "never"
+
+    def test_options_cleanup_mode_invalid(self, mock_context, mock_module_options):
+        """Test invalid CLEANUP_MODE validation."""
+        mock_module_options["CLEANUP_MODE"] = "invalid"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        assert mock_context.log.fail.call_count >= 1
+        assert mock_context.log.fail.call_args_list[0][0][0] == "CLEANUP_MODE must be one of: always, success, never (default: always)"
+
+    def test_cleanup_only_on_success(self, patch_get_worker, module_instance, mock_context, mock_connection):
+        """Test CLEANUP_MODE=success only cleans up if beacon registers."""
+        mock_worker = patch_get_worker
+        
+        mock_worker.submit_task.side_effect = lambda method, *a, **k: (
+            [] if method in ['beacons', 'sessions'] else 
+            None
+        )
+        
+        mock_handler = Mock()
+        mock_handler.get_cleanup_cmd = Mock(return_value="del /f /q C:\\temp\\implant.exe")
+        
+        module_instance.config_path = "/fake/config.cfg"
+        module_instance.wait_seconds = 1
+        
+        conn = mock_connection
+        conn.__class__.__name__ = 'winrm'
+        conn.ps_execute = Mock(return_value="")
+        
+        module_instance._wait_for_beacon_and_cleanup(
+            mock_context,
+            conn,
+            "C:\\temp\\implant.exe",
+            "windows",
+            "implant_test",
+            mock_handler,
+            "winrm",
+            cleanup_mode="success",
+            listener_job_id=None,
+            website_name=None
+        )
+        
+        mock_handler.get_cleanup_cmd.assert_not_called()
 

