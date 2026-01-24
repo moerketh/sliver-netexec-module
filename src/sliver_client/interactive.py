@@ -16,7 +16,7 @@
 
 from typing import List, Optional
 
-from sliver.pb.commonpb import common_pb2
+from .pb.commonpb import common_pb2
 
 from ._protocols import InteractiveObject
 from .protobuf import client_pb2, sliver_pb2

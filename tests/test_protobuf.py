@@ -3,8 +3,8 @@
 import pytest
 
 def test_generate_stage_req_exists():
-    """Test that GenerateStageReq class is available in the generated protobuf bindings."""
-    from sliver.pb.clientpb import client_pb2
+    """Test that GenerateStageReq class is available in generated protobuf bindings."""
+    from sliver_client.pb.clientpb import client_pb2
 
     # Check that it's a class
     assert hasattr(client_pb2.GenerateStageReq, '__init__')

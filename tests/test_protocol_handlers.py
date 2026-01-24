@@ -13,13 +13,13 @@ category_mock = Mock()
 category_mock.PRIVILEGE_ESCALATION = 'PRIVILEGE_ESCALATION'
 sys.modules['nxc.helpers.misc'].CATEGORY = category_mock
 
-# Mock sliver imports
-sys.modules['sliver'] = Mock()
-sys.modules['sliver.pb'] = Mock()
-sys.modules['sliver.pb.clientpb'] = Mock()
-sys.modules['sliver.pb.clientpb'].client_pb2 = Mock()
-sys.modules['sliver.pb.rpcpb'] = Mock()
-sys.modules['sliver.pb.rpcpb'].services_pb2_grpc = Mock()
+# Mock sliver_client imports
+sys.modules['sliver_client'] = Mock()
+sys.modules['sliver_client.pb'] = Mock()
+sys.modules['sliver_client.pb.clientpb'] = Mock()
+sys.modules['sliver_client.pb.clientpb'].client_pb2 = Mock()
+sys.modules['sliver_client.pb.rpcpb'] = Mock()
+sys.modules['sliver_client.pb.rpcpb'].services_pb2_grpc = Mock()
 
 from nxc.modules.sliver_exec import NXCModule, SMBHandler, SSHHandler, WinRMHandler, MSSQLHandler  # noqa: E402
 import sys

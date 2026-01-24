@@ -10,8 +10,16 @@
 		"vscode": {
 			"extensions": [
 				"ms-python.python",
-				"ms-python.pytest"
+				"ms-python.pytest",
+				"sst-dev.opencode"
 			]
 		}
-	}
+	},
+	"forwardPorts": [
+		31337,   // multiplayer/operator
+		80,      // HTTP C2
+		443,     // HTTPS C2 (needs root or cap_net_bind_service)
+		8080,    // HTTP staging port
+		8888     // mTLS default
+	]
 }

