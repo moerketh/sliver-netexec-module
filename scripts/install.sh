@@ -99,7 +99,18 @@ detect_nxc_installation() {
         exit 1
     fi
 
-    NXC_MODULES_DIR=$(python3 -c "
+    NETEXEC_PYTHON=$(head -1 "$NXC_BINARY" | sed 's/#!//' | awk '{print $1}')
+    
+    if [ ! -x "$NETEXEC_PYTHON" ]; then
+        print_error "Cannot determine Python interpreter used by NetExec"
+        print_info "NetExec binary: $NXC_BINARY"
+        print_info "Shebang: $(head -1 $NXC_BINARY)"
+        exit 1
+    fi
+
+    print_info "NetExec uses Python: $NETEXEC_PYTHON"
+
+    NXC_MODULES_DIR=$($NETEXEC_PYTHON -c "
 import sys
 import os
 from importlib.util import find_spec
@@ -116,23 +127,29 @@ if spec and spec.origin:
 
     print_info "NetExec modules at: $NXC_MODULES_DIR"
 
-    # Detect installation method
     if echo "$NXC_BINARY" | grep -q "pipx"; then
         INSTALL_METHOD="pipx"
         print_success "NetExec installed via pipx"
     elif echo "$NXC_MODULES_DIR" | grep -q "\.local"; then
         INSTALL_METHOD="pip-user"
+        INSTALL_PYTHON="$NETEXEC_PYTHON"
+        INSTALL_PIP="$NETEXEC_PYTHON -m pip"
         print_success "NetExec installed via pip (user)"
     elif echo "$NXC_MODULES_DIR" | grep -qE "(venv|virtualenv)"; then
         INSTALL_METHOD="pip-venv"
         NXC_VENV=$(echo "$NXC_MODULES_DIR" | grep -oE "^.*/(venv|virtualenv|.*-venv|.*env)")
         NXC_PIP="$NXC_VENV/bin/pip"
+        INSTALL_PIP="$NXC_PIP"
         print_success "NetExec installed in venv: $NXC_VENV"
     elif echo "$NXC_MODULES_DIR" | grep -q "/usr"; then
         INSTALL_METHOD="apt"
+        INSTALL_PYTHON="$NETEXEC_PYTHON"
+        INSTALL_PIP="$NETEXEC_PYTHON -m pip"
         print_success "NetExec installed via system package"
     else
         INSTALL_METHOD="pip"
+        INSTALL_PYTHON="$NETEXEC_PYTHON"
+        INSTALL_PIP="$NETEXEC_PYTHON -m pip"
         print_success "NetExec installed via pip"
     fi
 }
@@ -183,22 +200,25 @@ install_pip() {
 
     case "$INSTALL_METHOD" in
         pip-venv)
-            if [ -n "$NXC_PIP" ] && [ -f "$NXC_PIP" ]; then
-                print_info "Installing into NetExec venv: $NXC_VENV"
-                "$NXC_PIP" install "$WHEEL_PATH"
+            if [ -n "$INSTALL_PIP" ]; then
+                print_info "Installing into NetExec venv using: $INSTALL_PIP"
+                $INSTALL_PIP install "$WHEEL_PATH"
             else
-                print_error "NetExec venv pip not found at: $NXC_PIP"
+                print_error "NetExec venv pip not configured"
                 exit 1
             fi
             ;;
         apt)
-            sudo -H pip3 install "$WHEEL_PATH" --break-system-packages
+            print_info "Installing with sudo for system Python"
+            sudo -H $INSTALL_PIP install "$WHEEL_PATH" --break-system-packages
             ;;
         pip-user)
-            pip3 install --user "$WHEEL_PATH"
+            print_info "Installing to user site-packages using: $INSTALL_PIP"
+            $INSTALL_PIP install --user "$WHEEL_PATH"
             ;;
         *)
-            pip3 install "$WHEEL_PATH"
+            print_info "Installing using: $INSTALL_PIP"
+            $INSTALL_PIP install "$WHEEL_PATH"
             ;;
     esac
     
@@ -240,14 +260,11 @@ uninstall_module() {
 cleanup_existing() {
     print_header "Checking for existing installation..."
     
-    if [ "$INSTALL_METHOD" = "pip-venv" ] && [ -n "$NXC_PIP" ] && [ -f "$NXC_PIP" ]; then
-        if "$NXC_PIP" show sliver-nxc-module &> /dev/null; then
-            print_info "Found existing installation in venv, removing..."
-            "$NXC_PIP" uninstall -y sliver-nxc-module 2>/dev/null || true
-        fi
-    elif pip3 show sliver-nxc-module &> /dev/null; then
-        print_info "Found existing pip installation, removing..."
-        pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
+    local PIP_TO_USE="${INSTALL_PIP:-pip3}"
+    
+    if $PIP_TO_USE show sliver-nxc-module &> /dev/null; then
+        print_info "Found existing installation, removing..."
+        $PIP_TO_USE uninstall -y sliver-nxc-module 2>/dev/null || true
     fi
     
     if command -v pipx &> /dev/null; then
@@ -264,10 +281,21 @@ cleanup_existing() {
 verify_installation() {
     print_header "Verifying installation..."
 
-    if $NXC_CMD -M sliver_exec 2>&1 | grep -q "sliver_exec"; then
-        print_success "Module is available in NetExec"
+    if [ ! -f "$NXC_MODULES_DIR/sliver_exec.py" ]; then
+        print_error "Module file not found at: $NXC_MODULES_DIR/sliver_exec.py"
+        print_info "Checking where it was installed..."
+        find ~/.local -name "sliver_exec.py" 2>/dev/null || true
+        find /usr/local -name "sliver_exec.py" 2>/dev/null || true
+        exit 1
+    fi
+
+    print_success "Module file exists: $NXC_MODULES_DIR/sliver_exec.py"
+    
+    if $NXC_CMD smb -L 2>&1 | grep -q "sliver_exec"; then
+        print_success "Module is visible in NetExec module list"
     else
-        print_error "Module not found in NetExec"
+        print_error "Module file exists but is NOT visible in 'netexec smb -L'"
+        print_info "This may indicate a Python environment mismatch"
         exit 1
     fi
 }
