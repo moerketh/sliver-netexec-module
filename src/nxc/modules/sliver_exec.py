@@ -1020,9 +1020,20 @@ class NXCModule:
         Load Sliver client config from [Sliver] section or default path.
         Exits if config file missing.
         """
+        default_config = os.path.expanduser("~/.sliver-client/configs/default.cfg")
+        
+        if os.geteuid() == 0 and 'SUDO_USER' in os.environ:
+            sudo_user = os.environ['SUDO_USER']
+            import pwd
+            try:
+                user_home = pwd.getpwnam(sudo_user).pw_dir
+                default_config = os.path.join(user_home, ".sliver-client/configs/default.cfg")
+            except KeyError:
+                pass
+        
         self.config_path = context.conf.get(
             "Sliver", "config_path",
-            fallback=os.path.expanduser("~/.sliver-client/configs/default.cfg")
+            fallback=default_config
         )
         if not os.path.exists(self.config_path):
             context.log.fail(f"Sliver config not found: {self.config_path}")
