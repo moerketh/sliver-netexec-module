@@ -44,10 +44,11 @@ check_dependencies() {
         exit 1
     fi
 
-    PYTHON_VERSION=$(python3 --version | cut -d' ' -f1)
+    PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
     PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d'.' -f1)
+    PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d'.' -f2)
 
-    if [ "$PYTHON_MAJOR" -lt 3 ] || [ "$PYTHON_MAJOR" -gt 3 ] || [ "$PYTHON_MAJOR" -eq 3 -a "$(echo $PYTHON_VERSION | cut -d'.' -f2)" -lt 10 ]; then
+    if [ "$PYTHON_MAJOR" -ne 3 ] || [ "$PYTHON_MINOR" -lt 10 ]; then
         print_error "Python 3.10+ is required (found: $PYTHON_VERSION)"
         exit 1
     fi
@@ -93,8 +94,7 @@ detect_nxc_installation() {
 
     # Check pipx
     if command -v pipx &> /dev/null; then
-        NXC_PIPX_PATH=$(pipx list | grep netexec)
-        if [ -n "$NXC_PIPX_PATH" ]; then
+        if pipx list 2>/dev/null | grep -q "netexec"; then
             INSTALL_METHOD="pipx"
             print_success "NetExec installed via pipx"
             return
@@ -180,11 +180,11 @@ uninstall_module() {
 
     case "$INSTALL_METHOD" in
         pipx)
-            pipx uninject netexec sliver-nxc-module
+            pipx uninject netexec sliver-nxc-module 2>/dev/null || true
             print_success "Module removed via pipx"
             ;;
         pip|apt)
-            $SUDO pip3 uninstall -y sliver-nxc-module
+            $SUDO pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
             print_success "Module removed via pip"
             ;;
         *)
@@ -192,6 +192,24 @@ uninstall_module() {
             exit 1
             ;;
     esac
+}
+
+cleanup_existing() {
+    print_header "Checking for existing installation..."
+    
+    if pip3 show sliver-nxc-module &> /dev/null; then
+        print_info "Found existing pip installation, removing..."
+        pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
+    fi
+    
+    if command -v pipx &> /dev/null; then
+        if pipx list 2>/dev/null | grep -q "sliver-nxc-module"; then
+            print_info "Found existing pipx injection, removing..."
+            pipx uninject netexec sliver-nxc-module 2>/dev/null || true
+        fi
+    fi
+    
+    print_success "Cleanup complete"
 }
 
 # Verify installation
@@ -250,6 +268,7 @@ main() {
         --install)
             check_dependencies
             detect_nxc_installation
+            cleanup_existing
             build_wheel
             case "$INSTALL_METHOD" in
                 pipx)
@@ -281,10 +300,10 @@ main() {
             exit 0
             ;;
         *)
-            # No arguments - do full install workflow
 
             check_dependencies
             detect_nxc_installation
+            cleanup_existing
             build_wheel
 
             case "$INSTALL_METHOD" in
