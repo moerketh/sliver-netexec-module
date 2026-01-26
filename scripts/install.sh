@@ -127,9 +127,11 @@ if spec and spec.origin:
 
     print_info "NetExec modules at: $NXC_MODULES_DIR"
 
-    if echo "$NXC_BINARY" | grep -q "pipx"; then
+    if echo "$NXC_MODULES_DIR" | grep -q "pipx"; then
         INSTALL_METHOD="pipx"
-        print_success "NetExec installed via pipx"
+        NXC_VENV=$(echo "$NXC_MODULES_DIR" | grep -oE "^.*/venvs/[^/]+")
+        INSTALL_PIP="$NXC_VENV/bin/pip"
+        print_success "NetExec installed via pipx: $NXC_VENV"
     elif echo "$NXC_MODULES_DIR" | grep -q "\.local"; then
         INSTALL_METHOD="pip-user"
         INSTALL_PYTHON="$NETEXEC_PYTHON"
@@ -168,23 +170,6 @@ build_wheel() {
     fi
 }
 
-# Install via pipx
-install_pipx() {
-    print_header "Installing via pipx..."
-
-    WHEEL_PATH=$(find "$PROJECT_ROOT/dist" -name "sliver_nxc_module-*.whl" | head -1)
-
-    if [ ! -f "$WHEEL_PATH" ]; then
-        print_error "Wheel not found. Run 'poetry build' first."
-        exit 1
-    fi
-
-    print_info "Injecting: $WHEEL_PATH"
-
-    pipx inject netexec "$WHEEL_PATH"
-    print_success "Module installed via pipx"
-}
-
 # Install via pip
 install_pip() {
     print_header "Installing via pip..."
@@ -199,6 +184,15 @@ install_pip() {
     print_info "Installing: $WHEEL_PATH"
 
     case "$INSTALL_METHOD" in
+        pipx)
+            if [ -n "$INSTALL_PIP" ]; then
+                print_info "Installing into pipx venv using: $INSTALL_PIP"
+                $INSTALL_PIP install "$WHEEL_PATH"
+            else
+                print_error "pipx venv pip not configured"
+                exit 1
+            fi
+            ;;
         pip-venv)
             if [ -n "$INSTALL_PIP" ]; then
                 print_info "Installing into NetExec venv using: $INSTALL_PIP"
@@ -229,32 +223,13 @@ install_pip() {
 uninstall_module() {
     print_header "Uninstalling module..."
 
-    case "$INSTALL_METHOD" in
-        pipx)
-            pipx uninject netexec sliver-nxc-module 2>/dev/null || true
-            print_success "Module removed via pipx"
-            ;;
-        pip-venv)
-            if [ -n "$NXC_PIP" ] && [ -f "$NXC_PIP" ]; then
-                "$NXC_PIP" uninstall -y sliver-nxc-module 2>/dev/null || true
-            else
-                pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
-            fi
-            print_success "Module removed via pip"
-            ;;
-        apt)
-            sudo -H pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
-            print_success "Module removed via pip"
-            ;;
-        pip-user)
-            pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
-            print_success "Module removed via pip"
-            ;;
-        *)
-            pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
-            print_success "Module removed via pip"
-            ;;
-    esac
+    if [ -n "$INSTALL_PIP" ]; then
+        $INSTALL_PIP uninstall -y sliver-nxc-module 2>/dev/null || true
+        print_success "Module removed"
+    else
+        print_error "Could not determine pip to use for uninstall"
+        exit 1
+    fi
 }
 
 cleanup_existing() {
@@ -346,14 +321,7 @@ main() {
             detect_nxc_installation
             cleanup_existing
             build_wheel
-            case "$INSTALL_METHOD" in
-                pipx)
-                    install_pipx
-                    ;;
-                *)
-                    install_pip
-                    ;;
-            esac
+            install_pip
             ;;
         --uninstall)
             check_dependencies
@@ -362,6 +330,7 @@ main() {
             ;;
         --verify)
             check_dependencies
+            detect_nxc_installation
             verify_installation
             ;;
         --config-reminder)
@@ -377,15 +346,7 @@ main() {
             detect_nxc_installation
             cleanup_existing
             build_wheel
-
-            case "$INSTALL_METHOD" in
-                pipx)
-                    install_pipx
-                    ;;
-                *)
-                    install_pip
-                    ;;
-            esac
+            install_pip
 
             echo ""
             verify_installation
