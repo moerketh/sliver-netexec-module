@@ -88,35 +88,53 @@ check_dependencies() {
     fi
 }
 
-# Detect NetExec installation method
+# Detect NetExec installation location and method
 detect_nxc_installation() {
     print_header "Detecting NetExec installation..."
 
-    # Check pipx
-    if command -v pipx &> /dev/null; then
-        if pipx list 2>/dev/null | grep -q "netexec"; then
-            INSTALL_METHOD="pipx"
-            print_success "NetExec installed via pipx"
-            return
-        fi
+    NXC_BINARY=$(which netexec 2>/dev/null || which nxc 2>/dev/null)
+    
+    if [ -z "$NXC_BINARY" ]; then
+        print_error "NetExec not found. Please install NetExec first."
+        exit 1
     fi
 
-    # Check pip list
-    if pip3 list 2>/dev/null | grep -q "netexec"; then
+    NXC_MODULES_DIR=$(python3 -c "
+import sys
+import os
+from importlib.util import find_spec
+
+spec = find_spec('nxc')
+if spec and spec.origin:
+    print(os.path.join(os.path.dirname(spec.origin), 'modules'))
+" 2>/dev/null)
+
+    if [ -z "$NXC_MODULES_DIR" ]; then
+        print_error "Could not find NetExec modules directory"
+        exit 1
+    fi
+
+    print_info "NetExec modules at: $NXC_MODULES_DIR"
+
+    # Detect installation method
+    if echo "$NXC_BINARY" | grep -q "pipx"; then
+        INSTALL_METHOD="pipx"
+        print_success "NetExec installed via pipx"
+    elif echo "$NXC_MODULES_DIR" | grep -q "\.local"; then
+        INSTALL_METHOD="pip-user"
+        print_success "NetExec installed via pip (user)"
+    elif echo "$NXC_MODULES_DIR" | grep -qE "(venv|virtualenv)"; then
+        INSTALL_METHOD="pip-venv"
+        NXC_VENV=$(echo "$NXC_MODULES_DIR" | grep -oE "^.*/(venv|virtualenv|.*-venv|.*env)")
+        NXC_PIP="$NXC_VENV/bin/pip"
+        print_success "NetExec installed in venv: $NXC_VENV"
+    elif echo "$NXC_MODULES_DIR" | grep -q "/usr"; then
+        INSTALL_METHOD="apt"
+        print_success "NetExec installed via system package"
+    else
         INSTALL_METHOD="pip"
         print_success "NetExec installed via pip"
-        return
     fi
-
-    # Check system package
-    if dpkg -l 2>/dev/null | grep -q "netexec"; then
-        INSTALL_METHOD="apt"
-        print_success "NetExec installed via apt"
-        return
-    fi
-
-    print_error "Could not detect NetExec installation method"
-    exit 1
 }
 
 # Build wheel
@@ -163,14 +181,27 @@ install_pip() {
 
     print_info "Installing: $WHEEL_PATH"
 
-    # Check if we need sudo (for system pip)
-    if [ "$INSTALL_METHOD" = "apt" ]; then
-        SUDO="sudo -H"
-    else
-        SUDO=""
-    fi
-
-    $SUDO pip3 install "$WHEEL_PATH" --break-system-packages
+    case "$INSTALL_METHOD" in
+        pip-venv)
+            if [ -n "$NXC_PIP" ] && [ -f "$NXC_PIP" ]; then
+                print_info "Installing into NetExec venv: $NXC_VENV"
+                "$NXC_PIP" install "$WHEEL_PATH"
+            else
+                print_error "NetExec venv pip not found at: $NXC_PIP"
+                exit 1
+            fi
+            ;;
+        apt)
+            sudo -H pip3 install "$WHEEL_PATH" --break-system-packages
+            ;;
+        pip-user)
+            pip3 install --user "$WHEEL_PATH"
+            ;;
+        *)
+            pip3 install "$WHEEL_PATH"
+            ;;
+    esac
+    
     print_success "Module installed via pip"
 }
 
@@ -183,13 +214,25 @@ uninstall_module() {
             pipx uninject netexec sliver-nxc-module 2>/dev/null || true
             print_success "Module removed via pipx"
             ;;
-        pip|apt)
-            $SUDO pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
+        pip-venv)
+            if [ -n "$NXC_PIP" ] && [ -f "$NXC_PIP" ]; then
+                "$NXC_PIP" uninstall -y sliver-nxc-module 2>/dev/null || true
+            else
+                pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
+            fi
+            print_success "Module removed via pip"
+            ;;
+        apt)
+            sudo -H pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
+            print_success "Module removed via pip"
+            ;;
+        pip-user)
+            pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
             print_success "Module removed via pip"
             ;;
         *)
-            print_error "Cannot uninstall from $INSTALL_METHOD"
-            exit 1
+            pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
+            print_success "Module removed via pip"
             ;;
     esac
 }
@@ -197,7 +240,12 @@ uninstall_module() {
 cleanup_existing() {
     print_header "Checking for existing installation..."
     
-    if pip3 show sliver-nxc-module &> /dev/null; then
+    if [ "$INSTALL_METHOD" = "pip-venv" ] && [ -n "$NXC_PIP" ] && [ -f "$NXC_PIP" ]; then
+        if "$NXC_PIP" show sliver-nxc-module &> /dev/null; then
+            print_info "Found existing installation in venv, removing..."
+            "$NXC_PIP" uninstall -y sliver-nxc-module 2>/dev/null || true
+        fi
+    elif pip3 show sliver-nxc-module &> /dev/null; then
         print_info "Found existing pip installation, removing..."
         pip3 uninstall -y sliver-nxc-module 2>/dev/null || true
     fi
@@ -274,12 +322,8 @@ main() {
                 pipx)
                     install_pipx
                     ;;
-                pip|apt)
-                    install_pip
-                    ;;
                 *)
-                    print_error "Unsupported installation method: $INSTALL_METHOD"
-                    exit 1
+                    install_pip
                     ;;
             esac
             ;;
@@ -310,12 +354,8 @@ main() {
                 pipx)
                     install_pipx
                     ;;
-                pip|apt)
-                    install_pip
-                    ;;
                 *)
-                    print_error "Unsupported installation method: $INSTALL_METHOD"
-                    exit 1
+                    install_pip
                     ;;
             esac
 
