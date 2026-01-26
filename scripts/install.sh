@@ -204,7 +204,12 @@ install_pip() {
         pipx)
             if [ -n "$INSTALL_PIP" ]; then
                 print_info "Installing into pipx venv using: $INSTALL_PIP"
-                $INSTALL_PIP install "$WHEEL_PATH"
+                if [ -w "$NXC_VENV/lib" ]; then
+                    $INSTALL_PIP install "$WHEEL_PATH"
+                else
+                    print_info "pipx venv requires sudo access"
+                    sudo -H $INSTALL_PIP install "$WHEEL_PATH"
+                fi
             else
                 print_error "pipx venv pip not configured"
                 exit 1
@@ -241,7 +246,11 @@ uninstall_module() {
     print_header "Uninstalling module..."
 
     if [ -n "$INSTALL_PIP" ]; then
-        $INSTALL_PIP uninstall -y sliver-nxc-module 2>/dev/null || true
+        if [ "$INSTALL_METHOD" = "pipx" ] && [ ! -w "$NXC_VENV/lib" ]; then
+            sudo -H $INSTALL_PIP uninstall -y sliver-nxc-module 2>/dev/null || true
+        else
+            $INSTALL_PIP uninstall -y sliver-nxc-module 2>/dev/null || true
+        fi
         print_success "Module removed"
     else
         print_error "Could not determine pip to use for uninstall"
@@ -256,7 +265,11 @@ cleanup_existing() {
     
     if $PIP_TO_USE show sliver-nxc-module &> /dev/null; then
         print_info "Found existing installation, removing..."
-        $PIP_TO_USE uninstall -y sliver-nxc-module 2>/dev/null || true
+        if [ "$INSTALL_METHOD" = "pipx" ] && [ ! -w "$NXC_VENV/lib" ]; then
+            sudo -H $PIP_TO_USE uninstall -y sliver-nxc-module 2>/dev/null || true
+        else
+            $PIP_TO_USE uninstall -y sliver-nxc-module 2>/dev/null || true
+        fi
     fi
     
     if command -v pipx &> /dev/null; then
