@@ -58,6 +58,19 @@ The original test slowdown (~116s collection time) was caused by including the f
 
 ## Installation
 
+### Prerequisited
+
+Install Sliver
+```bash
+curl https://sliver.sh/install | sudo bash
+cp ~/.sliver-client/configs/${USER}_localhost.cfg ~/.sliver-client/configs/default.cfg
+```
+
+*Tip*: Add a bypass to proxychains to be able to reach the Sliver Server
+```bash
+echo "localnet 127.0.0.0/255.0.0.0" | sudo tee -a /etc/proxychains.conf
+```
+
 ### Quick Install
 
 Run the installation script to build and install the module:
