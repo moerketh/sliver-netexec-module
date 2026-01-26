@@ -130,8 +130,17 @@ if spec and spec.origin:
     if echo "$NXC_MODULES_DIR" | grep -q "pipx"; then
         INSTALL_METHOD="pipx"
         NXC_VENV=$(echo "$NXC_MODULES_DIR" | grep -oE "^.*/venvs/[^/]+")
-        INSTALL_PIP="$NXC_VENV/bin/pip"
+        
+        if [ -f "$NXC_VENV/bin/pip3" ]; then
+            INSTALL_PIP="$NXC_VENV/bin/pip3"
+        elif [ -f "$NXC_VENV/bin/pip" ]; then
+            INSTALL_PIP="$NXC_VENV/bin/pip"
+        else
+            INSTALL_PIP="$NETEXEC_PYTHON -m pip"
+        fi
+        
         print_success "NetExec installed via pipx: $NXC_VENV"
+        print_info "Using pip: $INSTALL_PIP"
     elif echo "$NXC_MODULES_DIR" | grep -q "\.local"; then
         INSTALL_METHOD="pip-user"
         INSTALL_PYTHON="$NETEXEC_PYTHON"
@@ -140,9 +149,17 @@ if spec and spec.origin:
     elif echo "$NXC_MODULES_DIR" | grep -qE "(venv|virtualenv)"; then
         INSTALL_METHOD="pip-venv"
         NXC_VENV=$(echo "$NXC_MODULES_DIR" | grep -oE "^.*/(venv|virtualenv|.*-venv|.*env)")
-        NXC_PIP="$NXC_VENV/bin/pip"
-        INSTALL_PIP="$NXC_PIP"
+        
+        if [ -f "$NXC_VENV/bin/pip3" ]; then
+            INSTALL_PIP="$NXC_VENV/bin/pip3"
+        elif [ -f "$NXC_VENV/bin/pip" ]; then
+            INSTALL_PIP="$NXC_VENV/bin/pip"
+        else
+            INSTALL_PIP="$NETEXEC_PYTHON -m pip"
+        fi
+        
         print_success "NetExec installed in venv: $NXC_VENV"
+        print_info "Using pip: $INSTALL_PIP"
     elif echo "$NXC_MODULES_DIR" | grep -q "/usr"; then
         INSTALL_METHOD="apt"
         INSTALL_PYTHON="$NETEXEC_PYTHON"
