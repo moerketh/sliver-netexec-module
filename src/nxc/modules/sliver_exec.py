@@ -1145,7 +1145,10 @@ class NXCModule:
         high_priv_protocols = {"smb", "mssql"}
 
         if protocol in high_priv_protocols and not connection.admin_privs:
-            context.log.warning(f"Low-priv login on {protocol}; skipping (requires admin).")
+            if protocol == "mssql":
+                context.log.warning(f"Low-priv MSSQL login; skipping (requires sysadmin). Try: -M mssql_priv -o ACTION=privesc")
+            else:
+                context.log.warning(f"Low-priv login on {protocol}; skipping (requires admin).")
             return
 
 
