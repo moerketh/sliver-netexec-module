@@ -7,6 +7,10 @@
 
 set -e
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -120,7 +124,7 @@ build_wheel() {
     print_header "Building wheel..."
 
     if [ -n "$POETRY_CMD" ]; then
-        cd /workspaces/sliver-nxc-module
+        cd "$PROJECT_ROOT"
         $POETRY_CMD build
         print_success "Wheel built with Poetry"
     else
@@ -133,7 +137,7 @@ build_wheel() {
 install_pipx() {
     print_header "Installing via pipx..."
 
-    WHEEL_PATH=$(find /workspaces/sliver-nxc-module/dist -name "sliver_nxc_module-*.whl" | head -1)
+    WHEEL_PATH=$(find "$PROJECT_ROOT/dist" -name "sliver_nxc_module-*.whl" | head -1)
 
     if [ ! -f "$WHEEL_PATH" ]; then
         print_error "Wheel not found. Run 'poetry build' first."
@@ -150,7 +154,7 @@ install_pipx() {
 install_pip() {
     print_header "Installing via pip..."
 
-    WHEEL_PATH=$(find /workspaces/sliver-nxc-module/dist -name "sliver_nxc_module-*.whl" | head -1)
+    WHEEL_PATH=$(find "$PROJECT_ROOT/dist" -name "sliver_nxc_module-*.whl" | head -1)
 
     if [ ! -f "$WHEEL_PATH" ]; then
         print_error "Wheel not found. Run 'poetry build' first."
@@ -234,7 +238,7 @@ usage() {
 
 # Main script
 main() {
-    cd /workspaces/sliver-nxc-module
+    cd "$PROJECT_ROOT"
 
     # Parse arguments
     case "${1:-}" in
@@ -305,3 +309,5 @@ main() {
             ;;
     esac
 }
+
+main "$@"
