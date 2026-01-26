@@ -1144,9 +1144,10 @@ class NXCModule:
         protocol = connection.__class__.__name__.lower()
         high_priv_protocols = {"smb", "mssql"}
 
-        if protocol in high_priv_protocols and not connection.has_admin():
+        if protocol in high_priv_protocols and not connection.admin_privs:
             context.log.warning(f"Low-priv login on {protocol}; skipping (requires admin).")
             return
+
 
         self._run_beacon(context, connection)
 
