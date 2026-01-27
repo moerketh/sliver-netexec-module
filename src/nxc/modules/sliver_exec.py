@@ -1151,8 +1151,14 @@ class NXCModule:
                 context.log.warning(f"Low-priv login on {protocol}; skipping (requires admin).")
             return
 
-
-        self._run_beacon(context, connection)
+        try:
+            self._run_beacon(context, connection)
+        except ValueError as e:
+            # Catch connection errors with helpful messages (e.g., proxychains localnet hint)
+            context.log.fail(str(e))
+        except Exception as e:
+            # Unexpected errors should still be raised for debugging
+            raise
 
     # Make module show as high privilege
     def on_admin_login(self, context, connection):
