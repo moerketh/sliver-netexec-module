@@ -7,10 +7,6 @@ import base64
 from unittest.mock import Mock, MagicMock, patch
 
 # Import sliver_client and protobuf directly (no longer mocking)
-from sliver_client import SliverClientConfig, SliverClient
-from sliver_client.pb.clientpb import client_pb2 as clientpb
-from sliver_client.pb.rpcpb import services_pb2 as rpcpb
-from sliver_client.pb.rpcpb import services_pb2_grpc as rpc_grpc
 
 # Mock nxc submodules (keep nxc package real)
 sys.modules['nxc.helpers'] = Mock()
@@ -19,6 +15,8 @@ CATEGORY = Mock()
 CATEGORY.PRIVILEGE_ESCALATION = 'PRIVILEGE_ESCALATION'
 sys.modules['nxc.helpers.misc'].CATEGORY = CATEGORY
 
+# ruff: noqa: E402
+# Import after mocking modules (intentional for test setup)
 from nxc.modules.sliver_exec import NXCModule
 import sys
 sys.modules['sliver_exec'] = sys.modules['nxc.modules.sliver_exec']
@@ -1312,7 +1310,7 @@ class TestNXCModule:
                 assert mock_req.Host == "0.0.0.0"
                 assert mock_req.Port == 8080
                 assert mock_req.Website == "test_website"
-                assert mock_req.Secure == False
+                assert not mock_req.Secure
 
     @pytest.mark.asyncio
     async def test_grpc_worker_start_https_listener_with_website(self):
@@ -1348,7 +1346,7 @@ class TestNXCModule:
                 )
                 
                 assert result == mock_resp
-                assert mock_req.Secure == True
+                assert mock_req.Secure
 
     @pytest.mark.asyncio
     async def test_grpc_worker_kill_job(self):
@@ -1382,7 +1380,6 @@ class TestNXCModule:
 
     def test_run_beacon_http_staging_route(self, patch_get_worker, module_instance, mock_context, mock_connection):
         """Test that _run_beacon routes to HTTP staging when STAGER_PORT is set."""
-        mock_worker = patch_get_worker
         
         # Mock methods
         module_instance._detect_os_arch = Mock(return_value=('windows', 'amd64'))
@@ -1553,7 +1550,6 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         encoded = base64.b64encode(bootstrap_script.encode('utf-16-le')).decode('ascii')
         
         # WMI command wrapper adds minimal overhead
-        wmi_wrapper = f"(Get-WmiObject -Class Win32_Process -List).Create('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encoded}') | Out-Null"
         total_size = len(encoded)
         
         # Assert: Must be well under 150KB WinRM limit (153,600 bytes)
