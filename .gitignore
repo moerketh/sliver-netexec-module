@@ -1,5 +1,6 @@
 **/__pycache__/*
 .coverage
+.sisyphus/
 dist/
 *.egg-info/
 build/
