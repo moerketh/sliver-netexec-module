@@ -1767,11 +1767,11 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         # Read the actual code to verify WMIC pattern is present
         import inspect
-        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        source = inspect.getsource(module_instance._build_download_cradle)
         
-        # Verify WMIC pattern is in the code
-        assert 'WMIC process call create' in source, "certutil staging should use WMIC for async execution"
-        assert 'start "" /b cmd /c' not in source, "Old 'start /b cmd /c' pattern should be removed"
+        # Verify WMIC pattern: the method calls _build_wmic_command for certutil
+        assert 'self._build_wmic_command' in source, "certutil staging should use _build_wmic_command for async execution"
+        assert 'certutil -urlcache' in source, "Should use certutil -urlcache command"
 
     def test_wmic_pattern_in_bitsadmin_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that bitsadmin staging uses WMIC process call create for async execution."""
@@ -1787,11 +1787,11 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         # Read the actual code to verify WMIC pattern is present
         import inspect
-        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        source = inspect.getsource(module_instance._build_download_cradle)
         
-        # Verify WMIC pattern is in the code
-        assert 'WMIC process call create' in source, "bitsadmin staging should use WMIC for async execution"
-        assert 'start "" /b cmd /c' not in source, "Old 'start /b cmd /c' pattern should be removed"
+        # Verify WMIC pattern: the method calls _build_wmic_command for bitsadmin
+        assert 'self._build_wmic_command' in source, "bitsadmin staging should use _build_wmic_command for async execution"
+        assert 'bitsadmin /transfer' in source, "Should use bitsadmin /transfer command"
 
     def test_powershell_staging_unchanged(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that PowerShell staging still uses Start-Process (not WMIC)."""
@@ -1826,10 +1826,10 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         # Read the actual code to verify SMB PowerShell pattern
         import inspect
-        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        source = inspect.getsource(module_instance._build_download_cradle)
         
         # Verify SMB context and PowerShell async pattern
-        assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
+        assert 'cmd /c powershell' in source, "PowerShell SMB staging should use cmd /c wrapper"
         assert 'Start-Process' in source, "PowerShell SMB staging should use Start-Process"
         assert 'powershell -ep bypass -w hidden' in source, "PowerShell SMB should use bypass mode"
 
@@ -1847,11 +1847,10 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         # Read the actual code to verify WMIC pattern
         import inspect
-        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        source = inspect.getsource(module_instance._build_download_cradle)
         
-        # Verify SMB context and WMIC pattern for certutil
-        assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
-        assert 'WMIC process call create' in source, "certutil SMB staging should use WMIC for async execution"
+        # Verify WMIC pattern: the method calls _build_wmic_command for certutil
+        assert 'self._build_wmic_command' in source, "certutil SMB staging should use _build_wmic_command for async execution"
         assert 'certutil -urlcache' in source, "SMB certutil should use certutil -urlcache command"
 
     def test_smb_staging_bitsadmin_uses_wmic(self, mock_context, mock_module_options, module_instance, mock_config_file):
@@ -1868,11 +1867,10 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         # Read the actual code to verify WMIC pattern
         import inspect
-        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        source = inspect.getsource(module_instance._build_download_cradle)
         
-        # Verify SMB context and WMIC pattern for bitsadmin
-        assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
-        assert 'WMIC process call create' in source, "bitsadmin SMB staging should use WMIC for async execution"
+        # Verify WMIC pattern: the method calls _build_wmic_command for bitsadmin
+        assert 'self._build_wmic_command' in source, "bitsadmin SMB staging should use _build_wmic_command for async execution"
         assert 'bitsadmin /transfer' in source, "SMB bitsadmin should use bitsadmin /transfer command"
 
     def test_smb_staging_windows_only_check(self, mock_context, mock_module_options, module_instance, mock_config_file):

