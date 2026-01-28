@@ -724,6 +724,7 @@ class NXCModule:
         self.rport = None
         self.cleanup_mode = "always"  # "always", "success", or "never"
         self.staging = False
+        self.staging_direct = False
         self.stager_rhost = None
         self.stager_rport = None
         self.stager_port = None  # For HTTP staging
@@ -823,12 +824,15 @@ class NXCModule:
 
         # For staging, validate stager options if provided
         staging_value = module_options.get("STAGING", "False")
-        # Support both old style (True/False) and new style (http/tcp/https)
-        if staging_value.lower() in ("true", "1", "yes", "http", "tcp", "https"):
+        # Support both old style (True/False) and new style (http/tcp/https/direct)
+        if staging_value.lower() in ("true", "1", "yes", "http", "tcp", "https", "direct"):
             staging_enabled = True
             # Validate STAGING value if it's a protocol
             if staging_value.lower() in ("http", "tcp", "https"):
                 stager_protocol = staging_value.lower()
+            elif staging_value.lower() == "direct":
+                # Direct staging opt-out: handled later in _parse_module_options
+                pass
             else:
                 # Old style: check STAGER_PROTOCOL
                 stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
@@ -956,12 +960,17 @@ class NXCModule:
 
         # Parse STAGING option (supports both old and new syntax)
         # Old: STAGING=True/False + STAGER_PROTOCOL=http/tcp/https
-        # New: STAGING=http/tcp/https (protocol embedded in STAGING value)
+        # New: STAGING=http/tcp/https/direct (protocol embedded in STAGING value)
         staging_value = module_options.get("STAGING", "False")
         if staging_value.lower() in ("http", "tcp", "https"):
             # New syntax: STAGING=http/tcp/https
             self.staging = True
             self.stager_protocol = staging_value.lower()
+        elif staging_value.lower() == "direct":
+            # Direct opt-out: disable staging explicitly
+            self.staging = False
+            self.staging_direct = True
+            self.stager_protocol = "http"  # Default value (unused when staging disabled)
         elif staging_value.lower() in ("true", "1", "yes"):
             # Old syntax: STAGING=True + STAGER_PROTOCOL
             self.staging = True
