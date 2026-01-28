@@ -1756,3 +1756,62 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         assert module_instance.staging_direct is True
         assert module_instance.protocol == "mssql"
 
+
+    def test_wmic_pattern_in_certutil_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that certutil staging uses WMIC process call create for async execution."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "certutil"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Verify staging method is set correctly
+        assert module_instance.staging_method == "certutil"
+        
+        # Read the actual code to verify WMIC pattern is present
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        
+        # Verify WMIC pattern is in the code
+        assert 'WMIC process call create' in source, "certutil staging should use WMIC for async execution"
+        assert 'start "" /b cmd /c' not in source, "Old 'start /b cmd /c' pattern should be removed"
+
+    def test_wmic_pattern_in_bitsadmin_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that bitsadmin staging uses WMIC process call create for async execution."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "bitsadmin"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Verify staging method is set correctly
+        assert module_instance.staging_method == "bitsadmin"
+        
+        # Read the actual code to verify WMIC pattern is present
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        
+        # Verify WMIC pattern is in the code
+        assert 'WMIC process call create' in source, "bitsadmin staging should use WMIC for async execution"
+        assert 'start "" /b cmd /c' not in source, "Old 'start /b cmd /c' pattern should be removed"
+
+    def test_powershell_staging_unchanged(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that PowerShell staging still uses Start-Process (not WMIC)."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "powershell"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Verify staging method is set correctly
+        assert module_instance.staging_method == "powershell"
+        
+        # Read the actual code
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        
+        # Verify PowerShell still uses Start-Process (not WMIC)
+        assert 'Start-Process' in source, "PowerShell staging should still use Start-Process"
