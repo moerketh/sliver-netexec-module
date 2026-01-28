@@ -1205,8 +1205,6 @@ class NXCModule:
             # Default to certutil unless user specified a different download tool
             if not self.staging_method or self.staging_method == "powershell":
                 self.staging_method = "certutil"
-            
-            context.log.display(f"Using HTTP download staging ({self.staging_method})")
 
         try:
             full_remote_path = None
