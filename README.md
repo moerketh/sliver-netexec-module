@@ -22,21 +22,17 @@ A NetExec (formerly CrackMapExec) module that deploys Sliver C2 implants to remo
    - Uploads full implant binary directly to target
    - Works with SMB, WinRM, SSH protocols
    - Simple, reliable, ~17MB payload upload
-   - **Note**: MSSQL now defaults to HTTP Download Staging (see below)
 
 2. **HTTP Download Staging** *(Default for MSSQL)*
    - Executes tiny download cradle (~200 bytes) on target
    - Target downloads implant from Sliver-hosted HTTP server
    - Three download methods: PowerShell, certutil, BITSAdmin
    - Automatic cleanup of HTTP listener and website
-   - **MSSQL**: Defaults to certutil (use `STAGING=direct` to force chunked upload)
 
 3. **TCP/HTTP Shellcode Injection**
    - In-memory shellcode injection
    - Two-stage: bootstrap shellcode + full implant
    - WinRM protocol only
-
-**Breaking Change (v0.2.0)**: MSSQL now defaults to HTTP download staging instead of chunked upload. Use `STAGING=direct` to force old behavior for air-gapped targets.
 
 ## Requirements
 

