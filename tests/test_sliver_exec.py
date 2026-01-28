@@ -1815,3 +1815,103 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         # Verify PowerShell still uses Start-Process (not WMIC)
         assert 'Start-Process' in source, "PowerShell staging should still use Start-Process"
+
+    def test_smb_staging_powershell_uses_start_process(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that PowerShell SMB staging uses Start-Process for async execution."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "powershell"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Verify staging method is set correctly
+        assert module_instance.staging_method == "powershell"
+        
+        # Read the actual code to verify SMB PowerShell pattern
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        
+        # Verify SMB context and PowerShell async pattern
+        assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
+        assert 'Start-Process' in source, "PowerShell SMB staging should use Start-Process"
+        assert 'powershell -ep bypass -w hidden' in source, "PowerShell SMB should use bypass mode"
+
+    def test_smb_staging_certutil_uses_wmic(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that certutil SMB staging uses WMIC process call create for async execution."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "certutil"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Verify staging method is set correctly
+        assert module_instance.staging_method == "certutil"
+        
+        # Read the actual code to verify WMIC pattern
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        
+        # Verify SMB context and WMIC pattern for certutil
+        assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
+        assert 'WMIC process call create' in source, "certutil SMB staging should use WMIC for async execution"
+        assert 'certutil -urlcache' in source, "SMB certutil should use certutil -urlcache command"
+
+    def test_smb_staging_bitsadmin_uses_wmic(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that bitsadmin SMB staging uses WMIC process call create for async execution."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "bitsadmin"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Verify staging method is set correctly
+        assert module_instance.staging_method == "bitsadmin"
+        
+        # Read the actual code to verify WMIC pattern
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        
+        # Verify SMB context and WMIC pattern for bitsadmin
+        assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
+        assert 'WMIC process call create' in source, "bitsadmin SMB staging should use WMIC for async execution"
+        assert 'bitsadmin /transfer' in source, "SMB bitsadmin should use bitsadmin /transfer command"
+
+    def test_smb_staging_windows_only_check(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that SMB staging validates Windows-only support."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "powershell"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Verify staging method is set correctly
+        assert module_instance.staging_method == "powershell"
+        
+        # Read the actual code to verify Windows-only validation
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        
+        # Verify SMB staging includes Windows-only checks
+        assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
+        assert 'os_type != "windows"' in source, "SMB staging should check for Windows-only support"
+
+    def test_smb_auto_enable_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test that SMB auto-enables staging for Windows targets."""
+        mock_context.conf.get.return_value = mock_config_file
+        # Set STAGING to False to test auto-enable
+        mock_module_options["STAGING"] = "False"
+        mock_module_options["RHOST"] = "10.0.0.1"
+        module_instance.options(mock_context, mock_module_options)
+        
+        # Read the actual code to verify auto-enable logic
+        import inspect
+        source = inspect.getsource(module_instance._run_beacon)
+        
+        # Verify SMB auto-enable block exists and checks Windows
+        assert 'protocol == "smb"' in source, "SMB auto-enable check should exist"
+        assert 'os_type == "windows"' in source, "SMB auto-enable should check for Windows OS"
+        assert 'self.staging = True' in source, "SMB auto-enable should set staging to True"
