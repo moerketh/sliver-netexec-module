@@ -826,6 +826,10 @@ class TestNXCModule:
         mock_profiles = []  # No existing profiles
         mock_resp = Mock()
         mock_resp.File.Data = b"implant_bytes"
+        
+        # Mock listener response with JobID
+        mock_listener_resp = Mock()
+        mock_listener_resp.JobID = 1
 
         call_count = 0
         def side_effect(method, *args, **kwargs):
@@ -839,6 +843,8 @@ class TestNXCModule:
                 return mock_profiles
             elif method == 'generate_implant':
                 return mock_resp
+            elif method == 'start_http_listener_with_website':
+                return mock_listener_resp
             elif method == 'beacons':
                 return []
             elif method == 'sessions':
@@ -1801,13 +1807,13 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         mock_module_options["DOWNLOAD_TOOL"] = "powershell"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+    
         # Verify staging method is set correctly
         assert module_instance.staging_method == "powershell"
         
         # Read the actual code
         import inspect
-        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        source = inspect.getsource(module_instance._execute_staged_command)
         
         # Verify PowerShell still uses Start-Process (not WMIC)
         assert 'Start-Process' in source, "PowerShell staging should still use Start-Process"
@@ -1887,7 +1893,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         
         # Read the actual code to verify Windows-only validation
         import inspect
-        source = inspect.getsource(module_instance._run_beacon_staged_http)
+        source = inspect.getsource(module_instance._execute_staged_command)
         
         # Verify SMB staging includes Windows-only checks
         assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
