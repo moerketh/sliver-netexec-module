@@ -1195,6 +1195,18 @@ class NXCModule:
         protocol = connection.__class__.__name__.lower()
         handler = self.get_handler(protocol)
 
+        # Auto-enable HTTP staging for MSSQL (unless explicitly opted out with STAGING=direct)
+        if protocol == "mssql" and not self.staging_direct:
+            # Enable HTTP download staging as default for MSSQL
+            self.staging = True
+            self.stager_port = self.stager_port or 8080
+            
+            # Default to certutil unless user specified a different download tool
+            if not self.staging_method or self.staging_method == "powershell":
+                self.staging_method = "certutil"
+            
+            context.log.display(f"Using HTTP download staging ({self.staging_method})")
+
         try:
             full_remote_path = None
             listener_job_id = None

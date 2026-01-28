@@ -46,3 +46,33 @@
 - All 5 MSSQL handler tests pass
 - All 16 staging tests pass
 - No regressions introduced
+
+## MSSQL Default HTTP Staging Implementation
+
+### Implementation Location
+- Lines 1197-1206 in `_run_beacon()` function (new block added)
+- Inserted after protocol detection (line 1196) and before the try block
+
+### Key Implementation Details
+1. **Condition**: `protocol == "mssql" and not self.staging_direct`
+   - Only triggers for MSSQL protocol
+   - Skipped if user explicitly set STAGING=direct (air-gapped scenario)
+   
+2. **Auto-settings applied**:
+   - `self.staging = True`: Enable HTTP staging mode
+   - `self.stager_port = self.stager_port or 8080`: Default port if not specified
+   - `self.staging_method = "certutil"`: Only if unset or still "powershell" default
+   
+3. **User override respected**:
+   - If user sets DOWNLOAD_TOOL=bitsadmin, staging_method keeps that value
+   - If user sets STAGING=direct, entire auto-staging block is skipped
+
+### Testing Insights
+- All 94/96 tests pass (same as before - 2 pre-existing on_login failures)
+- Change follows existing WinRM staging decision pattern
+- Routes correctly to `_run_beacon_staged_http()` for MSSQL
+
+### Breaking Change Impact
+- MSSQL now defaults to HTTP download staging instead of chunked upload
+- Users who need chunked upload (air-gapped) can opt-out with STAGING=direct
+- Log shows "Using HTTP download staging (certutil)" for visibility
