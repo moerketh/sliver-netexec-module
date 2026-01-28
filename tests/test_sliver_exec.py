@@ -124,7 +124,7 @@ class TestNXCModule:
         module_instance._run_beacon = Mock()
         conn = mock_connection
         conn.__class__.__name__ = 'smb'  # SMB requires high priv
-        conn.has_admin = Mock(return_value=False)
+        conn.admin_privs = False
         module_instance.on_login(mock_context, conn)
         mock_context.log.warning.assert_called_once_with("Low-priv login on smb; skipping (requires admin).")
         module_instance._run_beacon.assert_not_called()
@@ -134,9 +134,9 @@ class TestNXCModule:
         module_instance._run_beacon = Mock()
         conn = mock_connection
         conn.__class__.__name__ = 'mssql'  # MSSQL requires high priv
-        conn.has_admin = Mock(return_value=False)
+        conn.admin_privs = False
         module_instance.on_login(mock_context, conn)
-        mock_context.log.warning.assert_called_once_with("Low-priv login on mssql; skipping (requires admin).")
+        mock_context.log.warning.assert_called_once_with("Low-priv MSSQL login; skipping (requires sysadmin). Try: -M mssql_priv -o ACTION=privesc")
         module_instance._run_beacon.assert_not_called()
 
     def test_on_login_ssh_proceed(self, mock_context, mock_connection, module_instance):
