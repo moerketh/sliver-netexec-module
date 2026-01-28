@@ -1342,8 +1342,7 @@ class NXCModule:
                 context.log.fail(f"Port {stager_port} is already in use by another listener.")
                 context.log.fail("Solutions:")
                 context.log.fail(f"  1. Use a different port: -o STAGING_PORT=8081")
-                context.log.fail(f"  2. In Sliver console, kill existing listener: jobs -k <job_id>")
-                context.log.fail(f"  3. List active listeners with: jobs")
+                context.log.fail(f"  2. In Sliver console, list active listeners with: jobs, kill existing listener: jobs -k <job_id>")
                 sys.exit(1)
             raise
         listener_job_id = listener_resp.JobID
