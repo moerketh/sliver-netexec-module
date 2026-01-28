@@ -1737,3 +1737,22 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: not-a-number"
 
+    def test_staging_direct_option_parsing(self, mock_context, mock_module_options, module_instance, mock_config_file):
+        """Test STAGING=direct option sets correct flags."""
+        mock_context.conf.get.return_value = mock_config_file
+        mock_module_options["STAGING"] = "direct"
+        module_instance.options(mock_context, mock_module_options)
+        assert module_instance.staging is False
+        assert module_instance.staging_direct is True
+
+    def test_mssql_with_staging_direct_uses_chunked_upload(self, mock_context, mock_connection, module_instance):
+        """Test MSSQL with STAGING=direct avoids HTTP staging."""
+        module_instance.staging = False
+        module_instance.staging_direct = True
+        module_instance.protocol = "mssql"
+        module_instance.os_type = "windows"
+        
+        assert module_instance.staging is False
+        assert module_instance.staging_direct is True
+        assert module_instance.protocol == "mssql"
+

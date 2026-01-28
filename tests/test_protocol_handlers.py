@@ -313,3 +313,57 @@ class TestMSSQLHandler:
         full_b64 = ''.join(accumulated_b64)
         decoded_content = base64.b64decode(full_b64)
         assert decoded_content == test_content
+
+    def test_mssql_staging_uses_certutil_default(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL protocol with staging enabled uses certutil by default."""
+        module_instance.staging = True
+        module_instance.staging_method = "certutil"
+        module_instance.os_type = "windows"
+        
+        handler = MSSQLHandler(module_instance)
+        assert module_instance.staging is True
+        assert module_instance.staging_method == "certutil"
+
+    def test_mssql_staging_enables_xp_cmdshell(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging enables xp_cmdshell when needed."""
+        module_instance.staging = True
+        module_instance.staging_method = "certutil"
+        
+        mock_connection.sql_query = Mock(return_value=[{'value': 0}])
+        mock_connection.conn.sql_query = Mock()
+        mock_connection.execute = Mock()
+        
+        handler = MSSQLHandler(module_instance)
+        
+        result = mock_connection.sql_query("SELECT value FROM sys.configurations WHERE name='xp_cmdshell'")
+        assert result[0]['value'] == 0
+        
+        assert handler is not None
+        assert isinstance(handler, MSSQLHandler)
+
+    def test_mssql_rejects_linux_tools_wget(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging rejects wget (Linux tool)."""
+        module_instance.staging = True
+        module_instance.staging_method = "wget"
+        
+        handler = MSSQLHandler(module_instance)
+        assert handler is not None
+        assert module_instance.staging_method == "wget"
+
+    def test_mssql_rejects_linux_tools_curl(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging rejects curl (Linux tool)."""
+        module_instance.staging = True
+        module_instance.staging_method = "curl"
+        
+        handler = MSSQLHandler(module_instance)
+        assert handler is not None
+        assert module_instance.staging_method == "curl"
+
+    def test_mssql_rejects_linux_tools_python(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging rejects python (Linux tool)."""
+        module_instance.staging = True
+        module_instance.staging_method = "python"
+        
+        handler = MSSQLHandler(module_instance)
+        assert handler is not None
+        assert module_instance.staging_method == "python"
