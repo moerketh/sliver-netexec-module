@@ -1332,11 +1332,22 @@ class NXCModule:
         stager_port = self.stager_port
         
         context.log.display(f"Starting HTTP listener on {stager_host}:{stager_port}...")
-        listener_resp = self._worker_submit('start_http_listener_with_website',
-                                           stager_host,
-                                           stager_port,
-                                           website_name,
-                                           secure=False)
+        try:
+            listener_resp = self._worker_submit('start_http_listener_with_website',
+                                               stager_host,
+                                               stager_port,
+                                               website_name,
+                                               secure=False)
+        except Exception as e:
+            error_msg = str(e)
+            if "ALREADY_EXISTS" in error_msg or "in use" in error_msg:
+                context.log.fail(f"Port {stager_port} is already in use by another listener.")
+                context.log.fail("Solutions:")
+                context.log.fail(f"  1. Use a different port: -o STAGING_PORT=8081")
+                context.log.fail(f"  2. In Sliver console, kill existing listener: jobs -k <job_id>")
+                context.log.fail(f"  3. List active listeners with: jobs")
+                sys.exit(1)
+            raise
         listener_job_id = listener_resp.JobID
         context.log.info(f"HTTP listener started (Job ID: {listener_job_id})")
         
