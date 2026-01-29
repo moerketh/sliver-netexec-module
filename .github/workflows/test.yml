@@ -18,14 +18,36 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Install dependencies with pipx
+    - name: Install Poetry
       run: |
-        pipx install git+https://github.com/Pennyw0rth/NetExec
-        pipx inject netexec sliver-py
-        pipx runpip netexec install pytest ruff
+        curl -sSL https://install.python-poetry.org | python3 -
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Clone or update Sliver source
+      run: |
+        if [ -d "sliver-source" ]; then
+          cd sliver-source
+          git pull
+          cd ..
+        else
+          git clone https://github.com/BishopFox/sliver.git sliver-source
+        fi
+
+    - name: Install dependencies with Poetry
+      run: |
+        poetry config virtualenvs.in-project true
+        poetry install
+
+    - name: Generate protobuf files
+      run: |
+        cd sliver-py
+        python scripts/protobufgen.py
+        cd ..
+        mkdir -p src/sliver
+        cp -r sliver-py/sliver src/
+        cp -r sliver-py/src/sliver/pb/*pyi src/sliver/pb/ 2>/dev/null || true
 
     - name: Run tests
       run: |
-        VENV_BASE=$(pipx list | grep "venvs are in" | sed 's/.*venvs are in \(.*\)/\1/')
-        VENV_PATH="${VENV_BASE}/netexec"
-        "$VENV_PATH/bin/python" -m pytest tests/test_sliver_exec.py -v
+        export PYTHONPATH="$PWD/src:$PYTHONPATH"
+        poetry run pytest tests/test_sliver_exec.py -v

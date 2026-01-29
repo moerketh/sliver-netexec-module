@@ -1,3 +1,7 @@
-tests/__pycache__/*
-__pycache__/*
+**/__pycache__/*
 .coverage
+.sisyphus/
+dist/
+*.egg-info/
+build/
+.opencode/
