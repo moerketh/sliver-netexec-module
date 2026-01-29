@@ -38,15 +38,6 @@ jobs:
         poetry config virtualenvs.in-project true
         poetry install
 
-    - name: Generate protobuf files
-      run: |
-        cd sliver-py
-        python scripts/protobufgen.py
-        cd ..
-        mkdir -p src/sliver
-        cp -r sliver-py/sliver src/
-        cp -r sliver-py/src/sliver/pb/*pyi src/sliver/pb/ 2>/dev/null || true
-
     - name: Run tests
       run: |
         export PYTHONPATH="$PWD/src:$PYTHONPATH"
