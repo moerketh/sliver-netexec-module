@@ -424,7 +424,7 @@ class TestNXCModule:
         mock_get_worker.return_value = mock_worker
 
         # Mock profile with proper Config structure
-        from sliver.pb.clientpb import client_pb2 as clientpb
+        from sliver_client.pb.clientpb import client_pb2 as clientpb
         mock_profile = Mock()
         mock_profile.Name = "test-profile-name"
         mock_profile.Config = clientpb.ImplantConfig()
@@ -668,7 +668,7 @@ class TestNXCModule:
 
     def test_build_ic_from_profile_incompatible(self, patch_get_worker, module_instance, mock_context, mock_config_file):
         """Profile platform mismatch should cause failure."""
-        from sliver.pb.clientpb import client_pb2 as clientpb
+        from sliver_client.pb.clientpb import client_pb2 as clientpb
 
         # Create a profile that targets linux/386 while host is windows/amd64
         mock_profile = Mock()
@@ -715,7 +715,7 @@ class TestNXCModule:
         ic_local = module_instance._build_default_implant_config('windows', 'amd64', 'test.exe', 'mtls://1.2.3.4:443')
 
         # Create a matching profile with identical Config
-        from sliver.pb.clientpb import client_pb2 as clientpb
+        from sliver_client.pb.clientpb import client_pb2 as clientpb
         p = clientpb.ImplantProfile()
         p.Name = 'match'
         p.Config.CopyFrom(ic_local)
