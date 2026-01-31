@@ -1,6 +1,9 @@
 {
 	"name": "Python NetExec Sliver Dev",
-	"image": "mcr.microsoft.com/devcontainers/python:2-3.12-bullseye",
+	"build": {
+    	"dockerfile": "Dockerfile",
+    	"context": "."
+  	},
 	"features": {
 		"ghcr.io/devcontainers/features/git:1": {}
 	},
