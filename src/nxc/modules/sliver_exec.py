@@ -775,10 +775,12 @@ class NXCModule:
         # Acceptable option sets:
         #  - RHOST (with optional RPORT, defaults to 443)
         #  - PROFILE (use existing profile)
+        #  - Config-provided RHOST (read from [Sliver] section in nxc.conf)
         has_rhost = bool(module_options.get("RHOST") is not None)
         has_profile = bool(module_options.get("PROFILE") is not None)
+        has_config_rhost = bool(context.conf.get("Sliver", "rhost", fallback=None))
 
-        if not (has_rhost or has_profile):
+        if not (has_rhost or has_profile or has_config_rhost):
             context.log.fail("Either RHOST OR PROFILE must be provided")
             context.log.fail("")
             context.log.fail("Examples:")
@@ -788,6 +790,19 @@ class NXCModule:
             context.log.fail("")
             context.log.fail("See: nxc <protocol> -M sliver_exec --options")
             sys.exit(1)
+
+        # Validate config-provided RHOST
+        if has_config_rhost:
+            import ipaddress
+            config_rhost = context.conf.get("Sliver", "rhost", fallback=None)
+            try:
+                ipaddress.IPv4Address(config_rhost)
+            except ipaddress.AddressValueError:
+                context.log.fail(f"RHOST in [Sliver] config must be a valid IPv4 address: {config_rhost}")
+                context.log.fail("")
+                context.log.fail("Example: In ~/.nxc/nxc.conf: [Sliver]")
+                context.log.fail("                          rhost = 10.0.0.5")
+                sys.exit(1)
 
         # If RHOST provided, validate it and optional RPORT
         if has_rhost:
@@ -945,14 +960,27 @@ class NXCModule:
             context.log.warning(f"IMPLANT_BASE_PATH {self.implant_base_path} does not exist locally.")
         
         # Parse RHOST and RPORT (RPORT defaults to 443 if not specified)
-        self.rhost = module_options.get("RHOST", None)
-        if "RPORT" in module_options and module_options.get("RPORT") is not None:
+        if module_options.get("RHOST") is not None:
+            self.rhost = module_options.get("RHOST")
+        else:
+            self.rhost = context.conf.get("Sliver", "rhost", fallback=None)
+        if module_options.get("RPORT") is not None:
             self.rport = int(module_options["RPORT"])
         else:
-            self.rport = 443 if self.rhost else None
+            config_val = context.conf.get("Sliver", "rport", fallback=None)
+            if config_val:
+                try:
+                    self.rport = int(config_val)
+                except ValueError:
+                    context.log.warning(f"Invalid rport in [Sliver] config: {config_val}, using default 443")
+                    self.rport = 443
+            else:
+                self.rport = 443 if self.rhost else None
         
-        cleanup_value = module_options.get("CLEANUP_MODE", "always")
-        self.cleanup_mode = str(cleanup_value).lower()
+        if module_options.get("CLEANUP_MODE") is not None:
+            self.cleanup_mode = str(module_options["CLEANUP_MODE"]).lower()
+        else:
+            self.cleanup_mode = str(context.conf.get("Sliver", "cleanup_mode", fallback="always")).lower()
         
 
         # Parse STAGING option (supports both old and new syntax)
@@ -980,11 +1008,44 @@ class NXCModule:
         self.os_type = module_options.get("OS", None)
         self.arch = module_options.get("ARCH", None)
         self.share_config = module_options.get("SHARE", None)  # Optional, used by SMB
-        self.wait_seconds = int(module_options.get("WAIT", "90"))
-        
+        if module_options.get("WAIT") is not None:
+            self.wait_seconds = int(module_options["WAIT"])
+        else:
+            config_val = context.conf.get("Sliver", "wait", fallback=None)
+            if config_val:
+                try:
+                    self.wait_seconds = int(config_val)
+                except ValueError:
+                    context.log.warning(f"Invalid wait in [Sliver] config: {config_val}, using default 90")
+                    self.wait_seconds = 90
+            else:
+                self.wait_seconds = 90
+
         # Parse beacon timing options (defaults: 5s interval, 3s jitter)
-        self.beacon_interval = int(module_options.get("BEACON_INTERVAL", "5"))
-        self.beacon_jitter = int(module_options.get("BEACON_JITTER", "3"))
+        if module_options.get("BEACON_INTERVAL") is not None:
+            self.beacon_interval = int(module_options["BEACON_INTERVAL"])
+        else:
+            config_val = context.conf.get("Sliver", "beacon_interval", fallback=None)
+            if config_val:
+                try:
+                    self.beacon_interval = int(config_val)
+                except ValueError:
+                    context.log.warning(f"Invalid beacon_interval in [Sliver] config: {config_val}, using default 5")
+                    self.beacon_interval = 5
+            else:
+                self.beacon_interval = 5
+        if module_options.get("BEACON_JITTER") is not None:
+            self.beacon_jitter = int(module_options["BEACON_JITTER"])
+        else:
+            config_val = context.conf.get("Sliver", "beacon_jitter", fallback=None)
+            if config_val:
+                try:
+                    self.beacon_jitter = int(config_val)
+                except ValueError:
+                    context.log.warning(f"Invalid beacon_jitter in [Sliver] config: {config_val}, using default 3")
+                    self.beacon_jitter = 3
+            else:
+                self.beacon_jitter = 3
         
         # PROFILE mode
         self.profile = module_options.get("PROFILE", None)

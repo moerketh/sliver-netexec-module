@@ -91,6 +91,33 @@ private_key = fake_key
     return str(config_file)
 
 @pytest.fixture
+def context_with_config():
+    """Context with configurable [Sliver] config section."""
+    context = Mock()
+    context.log = Mock()
+    context.log.fail = Mock()
+    context.log.warning = Mock()
+    context.log.display = Mock()
+    context.log.success = Mock()
+    context.log.debug = Mock()
+
+    def config_get(section, key, fallback=None, **kwargs):
+        config_values = {
+            ("Sliver", "config_path"): "/fake/config.cfg",
+            ("Sliver", "rhost"): "10.10.10.10",
+            ("Sliver", "rport"): "443",
+            ("Sliver", "beacon_interval"): "5",
+            ("Sliver", "beacon_jitter"): "3",
+            ("Sliver", "wait"): "90",
+            ("Sliver", "cleanup_mode"): "always",
+        }
+        return config_values.get((section, key), fallback)
+
+    context.conf = Mock()
+    context.conf.get = Mock(side_effect=config_get)
+    return context
+
+@pytest.fixture
 def mock_connection():
     connection = Mock()
     connection.host = "192.168.1.100"
@@ -970,6 +997,111 @@ class TestNXCModule:
                 f"Method {method_name} has {actual_params} parameters, expected {expected_params}. "
                 f"Signature: {sig}"
             )
+
+    @patch('os.path.exists')
+    @patch('os.path.isfile')
+    def test_config_rhost_satisfies_validation(self, mock_exists, mock_isfile, context_with_config, mock_module_options, module_instance):
+        """Config-provided RHOST alone should satisfy RHOST/PROFILE requirement."""
+        # Empty module options, but config has rhost
+        mock_module_options = {}
+        mock_exists.return_value = True  # Pretend config file exists
+        # Should not raise sys.exit(1)
+        module_instance.options(context_with_config, mock_module_options)
+
+        # Verify rhost was loaded from config
+        assert module_instance.rhost == "10.10.10.10"
+
+    @patch('os.path.exists')
+    @patch('os.path.isfile')
+    def test_invalid_config_value_uses_default(self, mock_exists, mock_isfile, mock_context, mock_module_options, module_instance):
+        """Invalid config values should log warning and use fallback."""
+        mock_module_options = {"RHOST": "10.10.10.10"}
+        mock_exists.return_value = True  # Pretend config file exists
+        # Set up invalid config values for this test
+        def config_values_with_invalid(section, key, fallback=None, **kwargs):
+            config_values = {
+                ("Sliver", "config_path"): "/fake/config.cfg",
+                ("Sliver", "rhost"): "10.10.10.10",
+                ("Sliver", "rport"): "invalid",
+                ("Sliver", "beacon_interval"): "bad",
+                ("Sliver", "beacon_jitter"): "3",
+                ("Sliver", "wait"): "90",
+                ("Sliver", "cleanup_mode"): "always",
+            }
+            if (section, key) in [("Sliver", "rport"), ("Sliver", "beacon_interval")]:
+                return config_values.get((section, key))
+            else:
+                return None
+        mock_context.conf.get = Mock(side_effect=lambda s, k, f=None: config_values_with_invalid(s, k, f=f))
+
+        module_instance.options(mock_context, mock_module_options)
+
+        # Verify defaults were used for invalid config values
+        assert module_instance.rport == 443
+        assert module_instance.beacon_interval == 5
+
+        # Verify warning was logged (check mock log.warning was called)
+        mock_context.log.warning.assert_any_call("Invalid rport in [Sliver] config: invalid, using default 443")
+        mock_context.log.warning.assert_any_call("Invalid beacon_interval in [Sliver] config: bad, using default 5")
+
+    @patch('os.path.exists')
+    @patch('os.path.isfile')
+    def test_module_option_overrides_config(self, mock_exists, mock_isfile, mock_context, mock_module_options, module_instance):
+        """Module options should always override config values."""
+        mock_module_options = {"RHOST": "10.20.20.20", "RPORT": "8888"}
+        mock_exists.return_value = True  # Pretend config file exists
+        mock_context.conf.get = Mock(side_effect=lambda s, k, f=None: {
+            ("Sliver", "config_path"): "/fake/config.cfg",
+            ("Sliver", "rhost"): "10.10.10.10",  # Should be overridden
+            ("Sliver", "rport"): "443",  # Should be overridden
+        }.get((s, k), f))
+
+        module_instance.options(mock_context, mock_module_options)
+
+        # Verify module options took precedence
+        assert module_instance.rhost == "10.20.20.20"
+        assert module_instance.rport == 8888
+
+    @patch('os.path.exists')
+    @patch('os.path.isfile')
+    def test_config_fallback_to_default(self, mock_exists, mock_isfile, mock_context, mock_module_options, module_instance):
+        """Empty config values should use hardcoded defaults."""
+        mock_module_options = {"RHOST": "10.10.10.10"}
+        mock_exists.return_value = True  # Pretend config file exists
+        mock_context.conf.get = Mock(side_effect=lambda s, k, f=None: {
+            ("Sliver", "config_path"): "/fake/config.cfg",
+            ("Sliver", "rhost"): "10.10.10.10",
+            # No rport in config - should use default 443
+            # No beacon_interval - should use default 5
+            # No beacon_jitter - should use default 3
+            # No wait - should use default 90
+            # No cleanup_mode - should use default "always"
+        }.get((s, k), f))
+
+        module_instance.options(mock_context, mock_module_options)
+
+        # Verify defaults were used
+        assert module_instance.rport == 443
+        assert module_instance.beacon_interval == 5
+        assert module_instance.beacon_jitter == 3
+        assert module_instance.wait_seconds == 90
+        assert module_instance.cleanup_mode == "always"
+
+    @patch('os.path.exists')
+    @patch('os.path.isfile')
+    def test_config_all_parameters(self, mock_exists, mock_isfile, context_with_config, mock_module_options, module_instance):
+        """Verify all 6 config parameters are read correctly."""
+        mock_module_options = {}  # All from config
+        mock_exists.return_value = True  # Pretend config file exists
+        module_instance.options(context_with_config, mock_module_options)
+
+        # Verify all config values were loaded
+        assert module_instance.rhost == "10.10.10.10"
+        assert module_instance.rport == 443
+        assert module_instance.beacon_interval == 5
+        assert module_instance.beacon_jitter == 3
+        assert module_instance.wait_seconds == 90
+        assert module_instance.cleanup_mode == "always"
 
     @pytest.mark.asyncio
     async def test_grpc_worker_start_stager_listener_tcp(self):

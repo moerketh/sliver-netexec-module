@@ -42,6 +42,29 @@ nxc smb 172.16.15.20 -u localuser -p password \
 
 See [Usage Guide](docs/USAGE.md) for more examples and options.
 
+## Configuration
+
+You can set default values in `~/.nxc/nxc.conf` to avoid repeating options:
+
+```ini
+[Sliver]
+config_path = ~/.sliver-client/configs/default.cfg
+rhost = 10.10.10.10
+rport = 443
+beacon_interval = 5
+beacon_jitter = 3
+wait = 90
+cleanup_mode = always
+```
+
+With config set, you can run without `-o` options:
+
+```bash
+nxc smb 172.16.15.20 -u localuser -p password -M sliver_exec
+```
+
+Module options (`-o KEY=value`) always override config file values.
+
 ## Documentation
 
 - **[Installation Guide](docs/INSTALLATION.md)** - Setup instructions for all platforms
