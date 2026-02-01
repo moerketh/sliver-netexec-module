@@ -23,16 +23,6 @@ jobs:
         curl -sSL https://install.python-poetry.org | python3 -
         echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-    - name: Clone or update Sliver source
-      run: |
-        if [ -d "sliver-source" ]; then
-          cd sliver-source
-          git pull
-          cd ..
-        else
-          git clone https://github.com/BishopFox/sliver.git sliver-source
-        fi
-
     - name: Install dependencies with Poetry
       run: |
         poetry config virtualenvs.in-project true
@@ -43,6 +33,7 @@ jobs:
       continue-on-error: false
 
     - name: Run tests with coverage
+      if: success() || failure()
       run: |
         poetry run pytest tests/ \
           --junitxml=test-results.xml \
