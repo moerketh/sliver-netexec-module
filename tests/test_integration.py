@@ -54,7 +54,8 @@ def _validate_env() -> None:
         missing.append("TARGET_HOST")
     if not TARGET_USER:
         missing.append("TARGET_USER")
-    if not TARGET_PASS:  missing.append("TARGET_PASS")
+    if not TARGET_PASS:
+        missing.append("TARGET_PASS")
     if not LISTENER_HOST:
         missing.append("SLIVER_LISTENER_HOST")
     

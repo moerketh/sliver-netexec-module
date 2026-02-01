@@ -1,7 +1,6 @@
 # tests/test_protocol_handlers.py
 import pytest
 import sys
-import os
 import base64
 import re
 from unittest.mock import Mock, patch, MagicMock
@@ -289,11 +288,11 @@ class TestMSSQLHandler:
                 if match:
                     chunk = match.group(1)
                     accumulated_b64.append(chunk)
-                return f"Chunk added"
+                return "Chunk added"
             # Simulate decoding
             elif "Get-Content" in ps_cmd and "[Convert]::FromBase64String" in ps_cmd:
                 full_b64 = ''.join(accumulated_b64)
-                decoded = base64.b64decode(full_b64)
+                _decoded = base64.b64decode(full_b64)  # Variable unused but decoding validates base64
                 # Simulate writing to final file (we'll check this)
                 return "File decoded and saved"
             return ""
@@ -320,7 +319,7 @@ class TestMSSQLHandler:
         module_instance.staging_method = "certutil"
         module_instance.os_type = "windows"
         
-        handler = MSSQLHandler(module_instance)
+        _handler = MSSQLHandler(module_instance)  # Handler instantiation triggers staging setup
         assert module_instance.staging is True
         assert module_instance.staging_method == "certutil"
 

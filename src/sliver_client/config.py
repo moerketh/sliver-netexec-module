@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Type, Union
+from typing import Union
 
 
 class SliverClientConfig(object):

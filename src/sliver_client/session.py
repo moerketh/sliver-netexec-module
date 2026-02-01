@@ -14,8 +14,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import logging
-from typing import List, Union
+from typing import List
 
 import grpc
 

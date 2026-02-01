@@ -1,6 +1,5 @@
 """Test that protobuf bindings are generated correctly."""
 
-import pytest
 
 def test_generate_stage_req_exists():
     """Test that GenerateStageReq class is available in generated protobuf bindings."""

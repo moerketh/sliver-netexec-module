@@ -1,5 +1,7 @@
 **/__pycache__/*
 .coverage
+coverage.xml
+test-results.xml
 .sisyphus/
 dist/
 *.egg-info/

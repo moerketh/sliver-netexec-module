@@ -16,7 +16,7 @@
 
 
 import logging
-from typing import AsyncGenerator, Dict, Iterable, List, Optional, Union
+from typing import AsyncGenerator, Dict, List, Optional, Union
 
 import grpc
 
