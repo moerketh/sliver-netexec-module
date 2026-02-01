@@ -71,12 +71,12 @@ def mock_module_options():
         "PROFILE": None,
         "WAIT": "30",
         "FORMAT": "exe",
-        "STAGING": "False",
-        "STAGER_RHOST": None,
-        "STAGER_RPORT": None,
-        "STAGER_PORT": None,
-        "STAGER_PROTOCOL": "http",
-        "STAGING_METHOD": None
+        "STAGING": "none",
+        "SHELLCODE_LISTENER_HOST": None,
+        "SHELLCODE_LISTENER_PORT": None,
+        "HTTP_STAGING_PORT": None,
+        "SHELLCODE_PROTOCOL": "http",
+        "DOWNLOAD_TOOL": None
     }
 
 @pytest.fixture
@@ -201,36 +201,36 @@ class TestNXCModule:
         assert mock_context.log.fail.call_args_list[0][0][0] == "RPORT must be a valid port number (1-65535): not-a-number"
 
     def test_options_invalid_stager_rhost(self, mock_context, mock_module_options):
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_RHOST"] = "invalid.ip.address"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["SHELLCODE_LISTENER_HOST"] = "invalid.ip.address"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGER_RHOST must be a valid IPv4 address: invalid.ip.address")
+        mock_context.log.fail.assert_called_once_with("SHELLCODE_LISTENER_HOST must be a valid IPv4 address: invalid.ip.address")
 
     def test_options_invalid_stager_rport(self, mock_context, mock_module_options):
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_RPORT"] = "99999"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["SHELLCODE_LISTENER_PORT"] = "99999"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGER_RPORT must be a valid port number (1-65535): 99999")
+        mock_context.log.fail.assert_called_once_with("SHELLCODE_LISTENER_PORT must be a valid port number (1-65535): 99999")
 
     def test_options_invalid_stager_rport_non_numeric(self, mock_context, mock_module_options):
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_RPORT"] = "not-a-number"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["SHELLCODE_LISTENER_PORT"] = "not-a-number"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGER_RPORT must be a valid port number (1-65535): not-a-number")
+        mock_context.log.fail.assert_called_once_with("SHELLCODE_LISTENER_PORT must be a valid port number (1-65535): not-a-number")
 
     def test_options_invalid_stager_protocol(self, mock_context, mock_module_options):
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PROTOCOL"] = "invalid"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["SHELLCODE_PROTOCOL"] = "invalid"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
-        mock_context.log.fail.assert_called_once_with("STAGER_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
+        mock_context.log.fail.assert_called_once_with("SHELLCODE_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
 
 
 
@@ -250,10 +250,10 @@ class TestNXCModule:
         assert module_instance.rhost == "192.168.1.100"
         assert module_instance.rport == 443
         assert module_instance.cleanup_mode == "always"
-        assert module_instance.staging is False
-        assert module_instance.stager_rhost is None
-        assert module_instance.stager_rport is None
-        assert module_instance.stager_protocol == "http"
+        assert module_instance.staging_mode is None
+        assert module_instance.shellcode_listener_host is None
+        assert module_instance.shellcode_listener_port is None
+        assert module_instance.shellcode_protocol == "http"
         assert module_instance.wait_seconds == 30
         assert module_instance.format == "EXECUTABLE"
         assert module_instance.extension == "exe"
@@ -270,27 +270,27 @@ class TestNXCModule:
 
     def test_options_valid_with_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_RHOST"] = "10.0.0.1"
-        mock_module_options["STAGER_RPORT"] = "8080"
-        mock_module_options["STAGER_PROTOCOL"] = "tcp"
+        mock_module_options["STAGING"] = "shellcode"
+        mock_module_options["SHELLCODE_LISTENER_HOST"] = "10.0.0.1"
+        mock_module_options["SHELLCODE_LISTENER_PORT"] = "8080"
+        mock_module_options["SHELLCODE_PROTOCOL"] = "tcp"
         module_instance.options(mock_context, mock_module_options)
         assert module_instance.rhost == "192.168.1.100"
         assert module_instance.rport == 443
-        assert module_instance.staging is True
-        assert module_instance.stager_rhost == "10.0.0.1"
-        assert module_instance.stager_rport == 8080
-        assert module_instance.stager_protocol == "tcp"
+        assert module_instance.staging_mode == "shellcode"
+        assert module_instance.shellcode_listener_host == "10.0.0.1"
+        assert module_instance.shellcode_listener_port == 8080
+        assert module_instance.shellcode_protocol == "tcp"
         mock_context.conf.get.assert_called_once()
     
     def test_options_staging_defaults_stager_rhost(self, mock_context, mock_module_options, module_instance, mock_config_file):
-        """Test that STAGER_RHOST defaults to RHOST when staging is enabled"""
+        """Test that SHELLCODE_LISTENER_HOST defaults to RHOST when shellcode staging is enabled"""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
+        mock_module_options["STAGING"] = "shellcode"
         module_instance.options(mock_context, mock_module_options)
         assert module_instance.rhost == "192.168.1.100"
-        assert module_instance.stager_rhost == "192.168.1.100"
-        assert module_instance.stager_rport == 443
+        assert module_instance.shellcode_listener_host == "192.168.1.100"
+        assert module_instance.shellcode_listener_port == 443
         mock_context.conf.get.assert_called_once()
     
     def test_options_beacon_interval_jitter(self, mock_context, mock_module_options, module_instance, mock_config_file):
@@ -934,9 +934,12 @@ class TestNXCModule:
         conn.ps_execute = Mock(return_value="Command completed")  # Mock successful PowerShell execution
 
         # Enable staging
-        module_instance.staging = True
+        module_instance.staging_mode = "shellcode"
+        module_instance.shellcode_listener_host = "192.168.1.100"
+        module_instance.shellcode_listener_port = 8080
+        module_instance.shellcode_protocol = "http"
         module_instance.rhost = "192.168.1.100"
-        module_instance.rport = 8080
+        module_instance.rport = 443
         module_instance.cleanup_mode = "never"
         module_instance.format = "EXECUTABLE"
         module_instance.extension = "exe"
@@ -946,7 +949,7 @@ class TestNXCModule:
 
         # Verify staging-specific calls were made
         mock_context.log.info.assert_any_call("Started HTTP stager listener on 192.168.1.100:8080")
-        mock_context.log.info.assert_any_call("Started mTLS C2 listener for stage 2 on 192.168.1.100:8080")
+        mock_context.log.info.assert_any_call("Started mTLS C2 listener for stage 2 on 192.168.1.100:443")
         mock_context.log.info.assert_any_call("Stager executed on 10.0.0.1 via winrm (multi-stage HTTP)")
 
     def test_method_signatures(self, module_instance):
@@ -1078,7 +1081,7 @@ class TestNXCModule:
         
         with patch.object(worker, '_do_connect', return_value=mock_client):
             with patch('nxc.modules.sliver_exec.clientpb'):
-                with pytest.raises(ValueError, match="Unsupported STAGER_PROTOCOL"):
+                with pytest.raises(ValueError, match="Unsupported SHELLCODE_PROTOCOL"):
                     await worker._do_start_stager_listener("127.0.0.1", 8080, "invalid")
 
     @pytest.mark.asyncio
@@ -1114,31 +1117,31 @@ class TestNXCModule:
     # === HTTP Staging Tests ===
     
     def test_options_invalid_stager_port(self, mock_context, mock_module_options):
-        """Test invalid STAGER_PORT validation."""
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "99999"
+        """Test invalid HTTP_STAGING_PORT validation."""
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "99999"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
-        assert mock_context.log.fail.call_args_list[0][0][0] == "STAGING_PORT must be a valid port number (1-65535): 99999"
+        assert mock_context.log.fail.call_args_list[0][0][0] == "HTTP_STAGING_PORT must be a valid port number (1-65535): 99999"
 
     def test_options_invalid_stager_port_non_numeric(self, mock_context, mock_module_options):
-        """Test non-numeric STAGER_PORT validation."""
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "not-a-number"
+        """Test non-numeric HTTP_STAGING_PORT validation."""
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "not-a-number"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
-        assert mock_context.log.fail.call_args_list[0][0][0] == "STAGING_PORT must be a valid port number (1-65535): not-a-number"
+        assert mock_context.log.fail.call_args_list[0][0][0] == "HTTP_STAGING_PORT must be a valid port number (1-65535): not-a-number"
 
     def test_options_invalid_staging_method(self, mock_context, mock_module_options):
-        """Test invalid STAGING_METHOD validation."""
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGING_METHOD"] = "invalid"
+        """Test invalid DOWNLOAD_TOOL validation."""
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["DOWNLOAD_TOOL"] = "invalid"
         module = NXCModule()
         with pytest.raises(SystemExit):
             module.options(mock_context, mock_module_options)
@@ -1149,58 +1152,58 @@ class TestNXCModule:
     def test_options_valid_with_http_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test valid options with HTTP staging enabled."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "8080"
-        mock_module_options["STAGING_METHOD"] = "powershell"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "powershell"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging is True
-        assert module_instance.stager_port == 8080
-        assert module_instance.staging_method == "powershell"
+        assert module_instance.staging_mode == "download"
+        assert module_instance.http_staging_port == 8080
+        assert module_instance.download_tool == "powershell"
 
     def test_options_http_staging_certutil(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test HTTP staging with certutil method."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "8080"
-        mock_module_options["STAGING_METHOD"] = "certutil"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "certutil"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging_method == "certutil"
+        assert module_instance.download_tool == "certutil"
 
     def test_options_http_staging_bitsadmin(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test HTTP staging with bitsadmin method."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "8080"
-        mock_module_options["STAGING_METHOD"] = "bitsadmin"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "bitsadmin"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging_method == "bitsadmin"
+        assert module_instance.download_tool == "bitsadmin"
 
     def test_options_http_staging_wget(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test HTTP staging with wget method (Linux)."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "8080"
-        mock_module_options["STAGING_METHOD"] = "wget"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "wget"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging_method == "wget"
+        assert module_instance.download_tool == "wget"
 
     def test_options_http_staging_curl(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test HTTP staging with curl method (Linux)."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "8080"
-        mock_module_options["STAGING_METHOD"] = "curl"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "curl"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging_method == "curl"
+        assert module_instance.download_tool == "curl"
 
     def test_options_http_staging_python(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test HTTP staging with python method (Linux)."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PORT"] = "8080"
-        mock_module_options["STAGING_METHOD"] = "python"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
+        mock_module_options["DOWNLOAD_TOOL"] = "python"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging_method == "python"
+        assert module_instance.download_tool == "python"
 
     @pytest.mark.asyncio
     async def test_grpc_worker_website_add_content(self):
@@ -1385,30 +1388,30 @@ class TestNXCModule:
                 assert mock_kill_req.ID == 123
 
     def test_run_beacon_http_staging_route(self, patch_get_worker, module_instance, mock_context, mock_connection):
-        """Test that _run_beacon routes to HTTP staging when STAGER_PORT is set."""
-        
+        """Test that _run_beacon routes to HTTP staging when HTTP_STAGING_PORT is set."""
+
         # Mock methods
         module_instance._detect_os_arch = Mock(return_value=('windows', 'amd64'))
         module_instance._run_beacon_staged_http = Mock(return_value=(None, 123, "website_abc"))
         module_instance._wait_for_beacon_and_cleanup = Mock()
         module_instance._cleanup_local_temp = Mock()
-        
+
         # Use WinRM connection
         conn = mock_connection
         conn.host = '10.0.0.1'
         conn.__class__.__name__ = 'winrm'
-        
+
         # Enable HTTP staging
-        module_instance.staging = True
-        module_instance.stager_port = 8080
-        module_instance.staging_method = "powershell"
+        module_instance.staging_mode = "download"
+        module_instance.http_staging_port = 8080
+        module_instance.download_tool = "powershell"
         module_instance.cleanup_mode = "always"
         module_instance.format = "EXECUTABLE"
         module_instance.extension = "exe"
-        
+
         # Run
         module_instance._run_beacon(mock_context, conn)
-        
+
         # Verify HTTP staging was called
         module_instance._run_beacon_staged_http.assert_called_once()
         # Verify cleanup was called with HTTP staging parameters
@@ -1461,55 +1464,43 @@ class TestNXCModule:
         conn.ps_execute.assert_called_once()
     
     def test_options_staging_new_syntax_http(self, mock_context, mock_module_options, module_instance, mock_config_file):
-        """Test new STAGING=http syntax"""
+        """Test new STAGING=shellcode + SHELLCODE_PROTOCOL=http syntax"""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING"] = "shellcode"
+        mock_module_options["SHELLCODE_PROTOCOL"] = "http"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging is True
-        assert module_instance.stager_protocol == "http"
+        assert module_instance.staging_mode == "shellcode"
+        assert module_instance.shellcode_protocol == "http"
         mock_context.conf.get.assert_called_once()
     
     def test_options_staging_new_syntax_tcp(self, mock_context, mock_module_options, module_instance, mock_config_file):
-        """Test new STAGING=tcp syntax"""
+        """Test new STAGING=shellcode + SHELLCODE_PROTOCOL=tcp syntax"""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "tcp"
+        mock_module_options["STAGING"] = "shellcode"
+        mock_module_options["SHELLCODE_PROTOCOL"] = "tcp"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging is True
-        assert module_instance.stager_protocol == "tcp"
+        assert module_instance.staging_mode == "shellcode"
+        assert module_instance.shellcode_protocol == "tcp"
         mock_context.conf.get.assert_called_once()
     
     def test_options_staging_port_new_name(self, mock_context, mock_module_options, module_instance, mock_config_file):
-        """Test STAGING_PORT (new name) instead of STAGER_PORT"""
+        """Test HTTP_STAGING_PORT option name"""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "9090"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "9090"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging is True
-        assert module_instance.stager_port == 9090
+        assert module_instance.staging_mode == "download"
+        assert module_instance.http_staging_port == 9090
         mock_context.conf.get.assert_called_once()
     
     def test_options_download_tool_new_name(self, mock_context, mock_module_options, module_instance, mock_config_file):
-        """Test DOWNLOAD_TOOL (new name) instead of STAGING_METHOD"""
+        """Test DOWNLOAD_TOOL option name"""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
+        mock_module_options["STAGING"] = "download"
         mock_module_options["DOWNLOAD_TOOL"] = "certutil"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging is True
-        assert module_instance.staging_method == "certutil"
-        mock_context.conf.get.assert_called_once()
-    
-    def test_options_staging_backward_compat(self, mock_context, mock_module_options, module_instance, mock_config_file):
-        """Test backward compatibility with old STAGING=True + STAGER_PROTOCOL syntax"""
-        mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "True"
-        mock_module_options["STAGER_PROTOCOL"] = "tcp"
-        mock_module_options["STAGER_PORT"] = "8888"
-        mock_module_options["STAGING_METHOD"] = "powershell"
-        module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging is True
-        assert module_instance.stager_protocol == "tcp"
-        assert module_instance.stager_port == 8888
-        assert module_instance.staging_method == "powershell"
+        assert module_instance.staging_mode == "download"
+        assert module_instance.download_tool == "certutil"
         mock_context.conf.get.assert_called_once()
 
     def test_bootstrap_stager_payload_under_150kb_limit(self, module_instance):
@@ -1740,41 +1731,38 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: not-a-number"
 
     def test_staging_direct_option_parsing(self, mock_context, mock_module_options, module_instance, mock_config_file):
-        """Test STAGING=direct option sets correct flags."""
+        """Test STAGING=none option sets correct flags."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "direct"
+        mock_module_options["STAGING"] = "none"
         module_instance.options(mock_context, mock_module_options)
-        assert module_instance.staging is False
-        assert module_instance.staging_direct is True
+        assert module_instance.staging_mode is None
 
-    def test_mssql_with_staging_direct_uses_chunked_upload(self, mock_context, mock_connection, module_instance):
-        """Test MSSQL with STAGING=direct avoids HTTP staging."""
-        module_instance.staging = False
-        module_instance.staging_direct = True
+    def test_mssql_with_staging_none_uses_upload(self, mock_context, mock_connection, module_instance):
+        """Test MSSQL with STAGING=none uses direct upload."""
+        module_instance.staging_mode = None
         module_instance.protocol = "mssql"
         module_instance.os_type = "windows"
-        
-        assert module_instance.staging is False
-        assert module_instance.staging_direct is True
+
+        assert module_instance.staging_mode is None
         assert module_instance.protocol == "mssql"
 
 
     def test_wmic_pattern_in_certutil_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that certutil staging uses WMIC process call create for async execution."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
         mock_module_options["DOWNLOAD_TOOL"] = "certutil"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+
         # Verify staging method is set correctly
-        assert module_instance.staging_method == "certutil"
-        
+        assert module_instance.download_tool == "certutil"
+
         # Read the actual code to verify WMIC pattern is present
         import inspect
         source = inspect.getsource(module_instance._build_download_cradle)
-        
+
         # Verify WMIC pattern: the method calls _build_wmic_command for certutil
         assert 'self._build_wmic_command' in source, "certutil staging should use _build_wmic_command for async execution"
         assert 'certutil -urlcache' in source, "Should use certutil -urlcache command"
@@ -1782,19 +1770,19 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
     def test_wmic_pattern_in_bitsadmin_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that bitsadmin staging uses WMIC process call create for async execution."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
         mock_module_options["DOWNLOAD_TOOL"] = "bitsadmin"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+
         # Verify staging method is set correctly
-        assert module_instance.staging_method == "bitsadmin"
-        
+        assert module_instance.download_tool == "bitsadmin"
+
         # Read the actual code to verify WMIC pattern is present
         import inspect
         source = inspect.getsource(module_instance._build_download_cradle)
-        
+
         # Verify WMIC pattern: the method calls _build_wmic_command for bitsadmin
         assert 'self._build_wmic_command' in source, "bitsadmin staging should use _build_wmic_command for async execution"
         assert 'bitsadmin /transfer' in source, "Should use bitsadmin /transfer command"
@@ -1802,38 +1790,38 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
     def test_powershell_staging_unchanged(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that PowerShell staging still uses Start-Process (not WMIC)."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
         mock_module_options["DOWNLOAD_TOOL"] = "powershell"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-    
+
         # Verify staging method is set correctly
-        assert module_instance.staging_method == "powershell"
-        
+        assert module_instance.download_tool == "powershell"
+
         # Read the actual code
         import inspect
         source = inspect.getsource(module_instance._execute_staged_command)
-        
+
         # Verify PowerShell still uses Start-Process (not WMIC)
         assert 'Start-Process' in source, "PowerShell staging should still use Start-Process"
 
     def test_smb_staging_powershell_uses_start_process(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that PowerShell SMB staging uses Start-Process for async execution."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
         mock_module_options["DOWNLOAD_TOOL"] = "powershell"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+
         # Verify staging method is set correctly
-        assert module_instance.staging_method == "powershell"
-        
+        assert module_instance.download_tool == "powershell"
+
         # Read the actual code to verify SMB PowerShell pattern
         import inspect
         source = inspect.getsource(module_instance._build_download_cradle)
-        
+
         # Verify SMB context and PowerShell async pattern
         assert 'cmd /c powershell' in source, "PowerShell SMB staging should use cmd /c wrapper"
         assert 'Start-Process' in source, "PowerShell SMB staging should use Start-Process"
@@ -1842,19 +1830,19 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
     def test_smb_staging_certutil_uses_wmic(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that certutil SMB staging uses WMIC process call create for async execution."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
         mock_module_options["DOWNLOAD_TOOL"] = "certutil"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+
         # Verify staging method is set correctly
-        assert module_instance.staging_method == "certutil"
-        
+        assert module_instance.download_tool == "certutil"
+
         # Read the actual code to verify WMIC pattern
         import inspect
         source = inspect.getsource(module_instance._build_download_cradle)
-        
+
         # Verify WMIC pattern: the method calls _build_wmic_command for certutil
         assert 'self._build_wmic_command' in source, "certutil SMB staging should use _build_wmic_command for async execution"
         assert 'certutil -urlcache' in source, "SMB certutil should use certutil -urlcache command"
@@ -1862,19 +1850,19 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
     def test_smb_staging_bitsadmin_uses_wmic(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that bitsadmin SMB staging uses WMIC process call create for async execution."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
         mock_module_options["DOWNLOAD_TOOL"] = "bitsadmin"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+
         # Verify staging method is set correctly
-        assert module_instance.staging_method == "bitsadmin"
-        
+        assert module_instance.download_tool == "bitsadmin"
+
         # Read the actual code to verify WMIC pattern
         import inspect
         source = inspect.getsource(module_instance._build_download_cradle)
-        
+
         # Verify WMIC pattern: the method calls _build_wmic_command for bitsadmin
         assert 'self._build_wmic_command' in source, "bitsadmin SMB staging should use _build_wmic_command for async execution"
         assert 'bitsadmin /transfer' in source, "SMB bitsadmin should use bitsadmin /transfer command"
@@ -1882,19 +1870,19 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
     def test_smb_staging_windows_only_check(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that SMB staging validates Windows-only support."""
         mock_context.conf.get.return_value = mock_config_file
-        mock_module_options["STAGING"] = "http"
-        mock_module_options["STAGING_PORT"] = "8080"
+        mock_module_options["STAGING"] = "download"
+        mock_module_options["HTTP_STAGING_PORT"] = "8080"
         mock_module_options["DOWNLOAD_TOOL"] = "powershell"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+
         # Verify staging method is set correctly
-        assert module_instance.staging_method == "powershell"
-        
+        assert module_instance.download_tool == "powershell"
+
         # Read the actual code to verify Windows-only validation
         import inspect
         source = inspect.getsource(module_instance._execute_staged_command)
-        
+
         # Verify SMB staging includes Windows-only checks
         assert 'elif protocol == "smb"' in source, "SMB staging block should exist"
         assert 'os_type != "windows"' in source, "SMB staging should check for Windows-only support"
@@ -1902,16 +1890,16 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
     def test_smb_auto_enable_staging(self, mock_context, mock_module_options, module_instance, mock_config_file):
         """Test that SMB auto-enables staging for Windows targets."""
         mock_context.conf.get.return_value = mock_config_file
-        # Set STAGING to False to test auto-enable
-        mock_module_options["STAGING"] = "False"
+        # Set STAGING to none to test auto-enable
+        mock_module_options["STAGING"] = "none"
         mock_module_options["RHOST"] = "10.0.0.1"
         module_instance.options(mock_context, mock_module_options)
-        
+
         # Read the actual code to verify auto-enable logic
         import inspect
         source = inspect.getsource(module_instance._run_beacon)
-        
+
         # Verify SMB auto-enable block exists and checks Windows
         assert 'protocol == "smb"' in source, "SMB auto-enable check should exist"
         assert 'os_type == "windows"' in source, "SMB auto-enable should check for Windows OS"
-        assert 'self.staging = True' in source, "SMB auto-enable should set staging to True"
+        assert 'self.staging_mode = "download"' in source, "SMB auto-enable should set staging_mode to download"

