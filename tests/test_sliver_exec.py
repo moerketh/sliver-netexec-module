@@ -17,7 +17,7 @@ sys.modules['nxc.helpers.misc'].CATEGORY = CATEGORY
 
 # ruff: noqa: E402
 # Import after mocking modules (intentional for test setup)
-from nxc.modules.sliver_exec import NXCModule
+from nxc.modules.sliver_exec import NXCModule, ModuleValidationError, ModuleExecutionError
 import sys
 sys.modules['sliver_exec'] = sys.modules['nxc.modules.sliver_exec']
 
@@ -160,7 +160,7 @@ class TestNXCModule:
     def test_options_missing_required(self, mock_context, mock_module_options):
         del mock_module_options["RHOST"]
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -169,14 +169,14 @@ class TestNXCModule:
     def test_options_invalid_format(self, mock_context, mock_module_options):
         mock_module_options["FORMAT"] = "dll"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         mock_context.log.fail.assert_called_once_with("Only EXECUTABLE format supported. Use: exe")
 
     def test_options_invalid_rhost(self, mock_context, mock_module_options):
         mock_module_options["RHOST"] = "invalid.ip.address"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -185,7 +185,7 @@ class TestNXCModule:
     def test_options_invalid_rport(self, mock_context, mock_module_options):
         mock_module_options["RPORT"] = "99999"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -194,7 +194,7 @@ class TestNXCModule:
     def test_options_invalid_rport_non_numeric(self, mock_context, mock_module_options):
         mock_module_options["RPORT"] = "not-a-number"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -204,7 +204,7 @@ class TestNXCModule:
         mock_module_options["STAGING"] = "download"
         mock_module_options["SHELLCODE_LISTENER_HOST"] = "invalid.ip.address"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         mock_context.log.fail.assert_called_once_with("SHELLCODE_LISTENER_HOST must be a valid IPv4 address: invalid.ip.address")
 
@@ -212,7 +212,7 @@ class TestNXCModule:
         mock_module_options["STAGING"] = "download"
         mock_module_options["SHELLCODE_LISTENER_PORT"] = "99999"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         mock_context.log.fail.assert_called_once_with("SHELLCODE_LISTENER_PORT must be a valid port number (1-65535): 99999")
 
@@ -220,7 +220,7 @@ class TestNXCModule:
         mock_module_options["STAGING"] = "download"
         mock_module_options["SHELLCODE_LISTENER_PORT"] = "not-a-number"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         mock_context.log.fail.assert_called_once_with("SHELLCODE_LISTENER_PORT must be a valid port number (1-65535): not-a-number")
 
@@ -228,7 +228,7 @@ class TestNXCModule:
         mock_module_options["STAGING"] = "download"
         mock_module_options["SHELLCODE_PROTOCOL"] = "invalid"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         mock_context.log.fail.assert_called_once_with("SHELLCODE_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
 
@@ -238,7 +238,7 @@ class TestNXCModule:
         mock_context.conf.get.return_value = mock_config_file
         mock_module_options["UNKNOWN_OPTION"] = "value"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with valid options list is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -330,7 +330,7 @@ class TestNXCModule:
 
     def test_detect_os_arch_invalid(self, mock_context, mock_connection, module_instance):
         mock_connection.server_os = "Unsupported OS"
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module_instance._detect_os_arch(mock_context, mock_connection)
         mock_context.log.fail.assert_called_once()
 
@@ -412,7 +412,7 @@ class TestNXCModule:
         module_instance.format = "EXECUTABLE"
         module_instance.profile = None  # Use default path
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleExecutionError):
             module_instance._generate_sliver_implant(mock_context, "windows", "amd64", "test.exe")
         mock_worker.submit_task.assert_any_call('connect', mock_config_file)
         mock_worker.submit_task.assert_any_call('jobs')
@@ -519,7 +519,7 @@ class TestNXCModule:
         module_instance.format = "EXECUTABLE"
         module_instance.profile = None
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleExecutionError):
             module_instance._generate_sliver_implant(mock_context, "windows", "amd64", "test.exe")
         mock_worker.submit_task.assert_any_call('connect', mock_config_file)
         mock_worker.submit_task.assert_any_call('jobs')
@@ -604,7 +604,7 @@ class TestNXCModule:
         module_instance.rport = "443"
         module_instance.format = "EXECUTABLE"
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleExecutionError):
             module_instance._generate_sliver_implant(mock_context, "windows", "amd64", "test.exe")
 
         mock_context.log.fail.assert_called_once()
@@ -684,7 +684,7 @@ class TestNXCModule:
         module_instance.profile = "p1"
         module_instance.config_path = mock_config_file
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module_instance._build_ic_from_profile(mock_context, "windows", "amd64", "test.exe")
 
         mock_context.log.fail.assert_called_once_with("Profile incompatible with host")
@@ -1121,7 +1121,7 @@ class TestNXCModule:
         mock_module_options["STAGING"] = "download"
         mock_module_options["HTTP_STAGING_PORT"] = "99999"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -1132,7 +1132,7 @@ class TestNXCModule:
         mock_module_options["STAGING"] = "download"
         mock_module_options["HTTP_STAGING_PORT"] = "not-a-number"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -1143,7 +1143,7 @@ class TestNXCModule:
         mock_module_options["STAGING"] = "download"
         mock_module_options["DOWNLOAD_TOOL"] = "invalid"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         # Check first call (error message with examples is multi-line)
         assert mock_context.log.fail.call_count >= 1
@@ -1582,7 +1582,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test invalid CLEANUP_MODE validation."""
         mock_module_options["CLEANUP_MODE"] = "invalid"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "CLEANUP_MODE must be one of: always, success, never (default: always)"
@@ -1632,7 +1632,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test BEACON_INTERVAL below minimum (1 second)."""
         mock_module_options["BEACON_INTERVAL"] = "0"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_INTERVAL must be between 1-3600 seconds: 0"
@@ -1641,7 +1641,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test BEACON_INTERVAL above maximum (3600 seconds)."""
         mock_module_options["BEACON_INTERVAL"] = "3601"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_INTERVAL must be between 1-3600 seconds: 3601"
@@ -1650,7 +1650,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test non-numeric BEACON_INTERVAL."""
         mock_module_options["BEACON_INTERVAL"] = "not-a-number"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_INTERVAL must be between 1-3600 seconds: not-a-number"
@@ -1673,7 +1673,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test BEACON_JITTER above maximum (3600 seconds)."""
         mock_module_options["BEACON_JITTER"] = "3601"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_JITTER must be between 0-3600 seconds: 3601"
@@ -1682,7 +1682,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test BEACON_JITTER cannot be negative."""
         mock_module_options["BEACON_JITTER"] = "-1"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_JITTER must be between 0-3600 seconds: -1"
@@ -1691,7 +1691,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test non-numeric BEACON_JITTER."""
         mock_module_options["BEACON_JITTER"] = "not-a-number"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "BEACON_JITTER must be between 0-3600 seconds: not-a-number"
@@ -1707,7 +1707,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test WAIT below minimum (1 second)."""
         mock_module_options["WAIT"] = "0"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: 0"
@@ -1716,7 +1716,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test WAIT above maximum (3600 seconds)."""
         mock_module_options["WAIT"] = "3601"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: 3601"
@@ -1725,7 +1725,7 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         """Test non-numeric WAIT."""
         mock_module_options["WAIT"] = "not-a-number"
         module = NXCModule()
-        with pytest.raises(SystemExit):
+        with pytest.raises(ModuleValidationError):
             module.options(mock_context, mock_module_options)
         assert mock_context.log.fail.call_count >= 1
         assert mock_context.log.fail.call_args_list[0][0][0] == "WAIT must be between 1-3600 seconds: not-a-number"

