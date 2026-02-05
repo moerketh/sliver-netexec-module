@@ -18,11 +18,11 @@ def _import_protobuf():
     global SliverClientConfig, SliverClient, grpc, clientpb, rpcpb, rpc_grpc
     if 'SliverClientConfig' not in globals() or SliverClientConfig is None:
         try:
-            from sliver_client import SliverClientConfig, SliverClient
-            import grpc
-            from sliver_client.pb.clientpb import client_pb2 as clientpb
-            from sliver_client.pb.rpcpb import services_pb2 as rpcpb
-            from sliver_client.pb.rpcpb import services_pb2_grpc as rpc_grpc
+            from sliver_client import SliverClientConfig, SliverClient  # pragma: no mutate
+            import grpc  # pragma: no mutate
+            from sliver_client.pb.clientpb import client_pb2 as clientpb  # pragma: no mutate
+            from sliver_client.pb.rpcpb import services_pb2 as rpcpb  # pragma: no mutate
+            from sliver_client.pb.rpcpb import services_pb2_grpc as rpc_grpc  # pragma: no mutate
         except ImportError:
             raise ImportError("Sliver client not available. This module should be installed with its packaged protobuf bindings.")
 
