@@ -2374,8 +2374,6 @@ $addr = [Mem]::VirtualAlloc(0, $bytes.Length, (0x1000 -bor 0x2000), 0x40);
         mock_saved_stage2 = Mock()
         mock_saved_stage2.Name = None
 
-        calls = {}
-
         def side_effect(method, *args, **kwargs):
             if method == "connect":
                 return None
@@ -2793,7 +2791,6 @@ class TestGenerateSliverStager:
     ):
         r"""Test successful stager generation with HTTP stage URL."""
         from sliver_client.pb.clientpb import client_pb2 as clientpb
-        import unittest.mock
 
         # Configure module
         module_instance.config_path = mock_config_file
