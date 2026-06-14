@@ -1,5 +1,7 @@
 # Sliver NetExec Module
 
+![Media Preview](./assets/sliver-netexec-module_media_preview.png)
+
 [![](https://github.com/moerketh/sliver-netexec-module/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/moerketh/sliver-netexec-module/actions/workflows/test.yml)
 
 A NetExec module that deploys Sliver C2 implants to remote Windows and Linux targets via SMB, WinRM, SSH, and MSSQL protocols.
